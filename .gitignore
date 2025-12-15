@@ -1,0 +1,122 @@
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
+node_modules/
+dist/
+.env
+*.log
+*.pid
+*.seed
+*.swp
+*.swo
+*.swn
+*.swm
+*.swx
+*.swz
+*.swp
+*.swo
+*.swn
+*.swm
+*.swx
+*.swz
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
+
+# Ignore node_modules
+node_modules/
+
+# Ignore build files
+dist/
+
+# Ignore environment files
+.env
+
+# Ignore log files
+*.log
+
+# Ignore PID files
+*.pid
+
+# Ignore seed files
+*.seed
+
+# Ignore swap files
+*.swp
+*.swo
+*.swn
+*.swm
+*.swx
+*.swz
+
+# Ignore python files
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore Java files
+*.class
+*.jar
+*.war
+*.ear
+*.jar
+*.war
+*.ear
+
+# Ignore JavaScript files
+*.js.map
+*.js.map
+
+# Ignore TypeScript files
+*.ts.map
+*.ts.map
+
+# Ignore CSS files
+*.css.map
+*.css.map
+
+# Ignore SCSS files
+*.scss.map
+*.scss.map
+
+# Ignore LESS files
+*.less.map
+*.less.map
+
+# Ignore SASS files
+*.sass.map
+*.sass.map
+
+# Ignore Stylus files
+*.styl.map
+*.styl.map
+
+# Ignore CoffeeScript files
+*.coffee.map
+*.coffee.map
+
+# Ignore Dart files
+*.dart.map
+*.dart.map
+
+# Ignore Go files
+*.go.map
+*.go.map
+
+# Ignore Rust files
+*.rs.map
+*.rs.map
+
+# Ignore Swift files
+*.swift.map
+*.swift.map
+
+# Ignore Kotlin files
+*.kt.map
+*.kt.map
+

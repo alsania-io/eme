@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "alsania-eme": {
+      "command": "node",
+      "args": ["/home/sigma/Desktop/echo-lab/memory-engine/dist/mcp-server.js"],
+      "env": {
+        "NODE_ENV": "production",
+        "EME_STORAGE_PATH": "./storage",
+        "EME_ENCRYPTION_KEY": "optional-encryption-key-change-in-production"
+      },
+      "description": "Alsania Echo Memory Engine - Persistent AI agent memory with vector search and knowledge graphs"
+    }
+  }
+}
