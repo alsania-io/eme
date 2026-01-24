@@ -1,0 +1,38 @@
+{
+  "//": "EME Configuration Example - Choose your storage backends",
+  "//": "====================================================",
+
+  "embeddingModel": "local",
+  "embeddingDimension": 384,
+
+  "//": "Vector Store Options: sqlite, postgres, qdrant, lancedb, memory, faiss",
+  "vectorStore": "postgres",
+  "postgresConnection": "postgresql://user:password@localhost:5432/eme_vectors",
+  "//vectorStore": "qdrant",
+  "//qdrantUrl": "http://localhost:6333",
+  "//qdrantCollection": "eme_vectors",
+  "//vectorStore": "sqlite",
+  "//vectorStorePath": "./storage/vectors.db",
+
+  "//": "Graph Store Options: sqlite, jsonl, memory",
+  "graphStore": "jsonl",
+  "graphStorePath": "./storage/graph.jsonl",
+
+  "//": "Snapshot Store Options: filesystem, filebase, ipfs, drive, s3",
+  "snapshotStore": "filesystem",
+  "snapshotPath": "./storage/snapshots",
+  "//snapshotStore": "ipfs",
+  "//snapshotConfig": {
+  "//": "ipfsGateway": "https://ipfs.io",
+  "//": "pinataJWT": "your-jwt-token-here"
+  "//": },
+
+  "//": "Memory Gate Configuration",
+  "memoryGateEnabled": true,
+  "memoryGateThreshold": 0.3,
+
+  "//": "General Configuration",
+  "maxMemoryEntries": 10000,
+  "similarityThreshold": 0.3,
+  "logLevel": "info"
+}

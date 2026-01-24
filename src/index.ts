@@ -1,10 +1,10 @@
-import type { Config, MemoryGateFilter, SearchResult } from './types.js';
-import { createMemoryManager } from './memory-manager.js';
-import { EMEMCPServer } from './mcp-server.js';
+import type { Config, MemoryGateFilter, SearchResult } from "./types.js";
+import { createMemoryManager } from "./memory-manager.js";
+import { EMEMCPServer } from "./mcp-server.js";
 
-export { MemoryManager, createMemoryManager } from './memory-manager.js';
-export { SQLiteVectorStore, createVectorStore } from './vector-store.js';
-export { SQLiteGraphStore, createGraphStore } from './graph-store.js';
+export { MemoryManager, createMemoryManager } from "./memory-manager.js";
+export { SQLiteVectorStore, createVectorStore } from "./vector-store.js";
+export { SQLiteGraphStore, createGraphStore } from "./graph-store.js";
 export type {
   MemoryEntry,
   GraphNode,
@@ -12,23 +12,41 @@ export type {
   SearchResult,
   MemoryGateFilter,
   Config,
-} from './types.js';
+} from "./types.js";
 
-export { EMEMCPServer } from './mcp-server.js';
+export { EMEMCPServer } from "./mcp-server.js";
 
 // Default configuration
 export const defaultConfig: Config = {
-  embeddingModel: 'local',
-  vectorStore: 'sqlite',
-  graphEnabled: true,
-  snapshotPath: './storage/snapshots',
+  // Embedding configuration
+  embeddingModel: "local",
+  embeddingDimension: 384, // BGE-small dimension
+
+  // Vector store configuration
+  vectorStore: "sqlite",
+  vectorStorePath: "./storage/vectors.db",
+
+  // Graph store configuration
+  graphStore: "jsonl",
+  graphStorePath: "./storage/graph.jsonl",
+
+  // Snapshot configuration
+  snapshotStore: "filesystem",
+  snapshotPath: "./storage/snapshots",
+
+  // Memory gate configuration
+  memoryGateEnabled: true,
+  memoryGateThreshold: 0.3,
+
+  // General configuration
   maxMemoryEntries: 10000,
   similarityThreshold: 0.3,
+  logLevel: "info",
 };
 
 // Utility function to create and start MCP server
-export async function startMCPServer(): Promise<void> {
-  const server = new EMEMCPServer();
+export async function startMCPServer(config?: Partial<Config>): Promise<void> {
+  const server = new EMEMCPServer(config);
   await server.start();
 }
 
@@ -47,20 +65,27 @@ export class MemoryEngine {
 
   async addMemory(
     text: string,
-    agentId: string = 'unknown',
-    namespace: string = 'default',
+    agentId: string = "unknown",
+    namespace: string = "default",
     tags: string[] = [],
-    visibility: 'private' | 'shared' | 'system' = 'private',
-    forceSave: boolean = false
-  ): Promise<{id: string | null, filter: MemoryGateFilter}> {
-    return await this.manager.addMemory(text, agentId, namespace, tags, visibility, forceSave);
+    visibility: "private" | "shared" | "system" = "private",
+    forceSave: boolean = false,
+  ): Promise<{ id: string | null; filter: MemoryGateFilter }> {
+    return await this.manager.addMemory(
+      text,
+      agentId,
+      namespace,
+      tags,
+      visibility,
+      forceSave,
+    );
   }
 
   async search(
     query: string,
     limit: number = 5,
     namespace?: string,
-    includeGraph: boolean = true
+    includeGraph: boolean = true,
   ): Promise<SearchResult[]> {
     return await this.manager.search(query, limit, namespace, includeGraph);
   }
@@ -70,40 +95,112 @@ export class MemoryEngine {
   }
 }
 
-// CLI support
+// CLI support - Single entry point for all operations
 if (require.main === module) {
   const command = process.argv[2];
-  
+  const args = process.argv.slice(3);
+
+  // Parse config arguments
+  const parseConfigArgs = (args: string[]): Partial<Config> => {
+    const config: Partial<Config> = {};
+    for (let i = 0; i < args.length; i += 2) {
+      if (args[i].startsWith("--") && i + 1 < args.length) {
+        const key = args[i].slice(2);
+        const value = args[i + 1];
+
+        if (key === "embeddingDimension" || key === "maxMemoryEntries") {
+          config[key] = parseInt(value, 10);
+        } else if (
+          key === "similarityThreshold" ||
+          key === "memoryGateThreshold"
+        ) {
+          config[key] = parseFloat(value);
+        } else if (key === "memoryGateEnabled") {
+          config[key] = value.toLowerCase() === "true";
+        } else {
+          (config as any)[key] = value;
+        }
+      }
+    }
+    return config;
+  };
+
   switch (command) {
-    case 'start':
-      startMCPServer().catch(console.error);
+    case "start":
+    case "server":
+      const serverConfig = parseConfigArgs(args);
+      startMCPServer(serverConfig).catch(console.error);
       break;
-    case 'test':
+
+    case "test":
       // Run basic tests
       (async () => {
         const engine = new MemoryEngine();
         await engine.initialize();
-        
-        const result = await engine.addMemory('Test memory from CLI', 'cli-test');
-        console.log('Added memory:', result);
-        
-        const searchResults = await engine.search('test memory');
-        console.log('Search results:', searchResults);
-        
+
+        console.log("🧪 Running EME basic tests...");
+
+        const result = await engine.addMemory(
+          "Test memory from CLI",
+          "cli-test",
+        );
+        console.log("✅ Added memory:", result);
+
+        const searchResults = await engine.search("test memory");
+        console.log("✅ Search results:", searchResults.length, "matches");
+
         await engine.close();
-        console.log('Test completed');
+        console.log("🎯 Test completed successfully");
       })().catch(console.error);
       break;
+
+    case "config":
+      console.log("📋 Current default configuration:");
+      console.log(JSON.stringify(defaultConfig, null, 2));
+      break;
+
+    case "version":
+      console.log("Alsania Echo Memory Engine (EME) - v1.0.0");
+      console.log("Professional memory system for MCP ecosystem");
+      break;
+
+    case "help":
     default:
       console.log(`
-Alsania Echo Memory Engine (EME) - v0.1.0
+╔══════════════════════════════════════════════════════════╗
+║   Alsania Echo Memory Engine (EME) - Professional CLI    ║
+╚══════════════════════════════════════════════════════════╝
 
-Commands:
-  start    - Start MCP server
-  test     - Run basic tests
+📦 Commands:
+  server    - Start MCP server (alias: start)
+    Usage: node dist/index.js server [--key value]
+    Example: node dist/index.js server --maxMemoryEntries 5000
 
-Usage:
-  node dist/index.js [command]
+  test      - Run basic functionality tests
+    Usage: node dist/index.js test
+
+  config    - Show default configuration
+    Usage: node dist/index.js config
+
+  version   - Show version information
+    Usage: node dist/index.js version
+
+  help      - Show this help message
+    Usage: node dist/index.js help
+
+🔧 Configuration options (for server command):
+  --embeddingDimension    Vector dimension (default: 384)
+  --maxMemoryEntries      Max entries per namespace (default: 10000)
+  --similarityThreshold   Search threshold (default: 0.3)
+  --memoryGateThreshold   Filter threshold (default: 0.7)
+  --memoryGateEnabled     Enable memory filtering (default: true)
+  --logLevel              Log level (default: "info")
+
+🎯 Examples:
+  node dist/index.js server
+  node dist/index.js server --maxMemoryEntries 5000 --logLevel debug
+  node dist/index.js test
+  node dist/index.js config
       `);
       break;
   }

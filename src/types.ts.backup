@@ -6,7 +6,7 @@ export interface MemoryEntry {
     agentId: string;
     namespace: string;
     tags: string[];
-    visibility: "private" | "shared" | "system";
+    visibility: 'private' | 'shared' | 'system';
     timestamp: number;
     version: number;
   };
@@ -16,15 +16,7 @@ export interface MemoryEntry {
 
 export interface GraphNode {
   id: string;
-  type:
-    | "concept"
-    | "event"
-    | "person"
-    | "tool"
-    | "task"
-    | "entity"
-    | "project"
-    | "state";
+  type: 'concept' | 'event' | 'person' | 'tool' | 'task' | 'entity' | 'project' | 'state';
   name: string;
   properties: Record<string, any>;
   createdAt: Date;
@@ -35,14 +27,7 @@ export interface GraphEdge {
   id: string;
   from: string;
   to: string;
-  type:
-    | "related_to"
-    | "is"
-    | "part_of"
-    | "changed_from"
-    | "updated_on"
-    | "owned_by"
-    | "assigned_to";
+  type: 'related_to' | 'is' | 'part_of' | 'changed_from' | 'updated_on' | 'owned_by' | 'assigned_to';
   weight: number;
   properties: Record<string, any>;
   createdAt: Date;
@@ -73,81 +58,35 @@ export interface MemoryGateFilter {
 
 export interface Config {
   // Embedding configuration
-  embeddingModel: "local" | "openai" | "cohere" | "huggingface";
+  embeddingModel: 'local' | 'openai' | 'cohere' | 'huggingface';
   embeddingModelPath?: string;
   embeddingDimension: number;
-
+  
   // Vector store configuration
-  vectorStore:
-    | "sqlite"
-    | "postgres"
-    | "qdrant"
-    | "lancedb"
-    | "memory"
-    | "faiss";
+  vectorStore: 'sqlite' | 'postgres' | 'qdrant' | 'lancedb' | 'memory' | 'faiss';
   vectorStorePath?: string;
   postgresConnection?: string;
   qdrantUrl?: string;
   qdrantCollection?: string;
-
-  // Graph store configuration
-  graphStore: "sqlite" | "jsonl" | "memory";
+  
+  // Graph store configuration  
+  graphStore: 'sqlite' | 'jsonl' | 'memory';
   graphStorePath?: string;
-
+  
   // Snapshot configuration
-  snapshotStore: "filesystem" | "ipfs" | "drive" | "s3";
+  snapshotStore: 'filesystem' | 'ipfs' | 'drive' | 's3';
   snapshotPath: string;
   snapshotConfig?: Record<string, any>;
-
+  
   // Memory gate configuration
   memoryGateEnabled: boolean;
   memoryGateThreshold: number;
-
+  
   // Security
   encryptionKey?: string;
-
+  
   // General configuration
   maxMemoryEntries: number;
   similarityThreshold: number;
-  logLevel: "debug" | "info" | "warn" | "error";
-}
-
-export interface GraphStats {
-  totalNodes: number;
-  totalEdges: number;
-  nodeTypes: Array<{ type: string; count: number }>;
-  edgeTypes: Array<{ type: string; count: number }>;
-  namespaces: Array<{ namespace: string; count: number }>;
-  density: number;
-  lastUpdated: Date;
-}
-
-export interface BatchMemoryRequest {
-  memories: Array<{
-    text: string;
-    agentId?: string;
-    namespace?: string;
-    tags?: string[];
-    visibility?: "private" | "shared" | "system";
-    forceSave?: boolean;
-  }>;
-}
-
-export interface BatchAddResponse {
-  successful: number;
-  failed: number;
-  memoryIds: string[];
-  errors: Array<{ index: number; error: string }>;
-}
-
-export interface NamespaceClearRequest {
-  namespace: string;
-  confirm?: boolean;
-}
-
-export interface NamespaceClearResponse {
-  clearedNodes: number;
-  clearedEdges: number;
-  namespace: string;
-  timestamp: Date;
+  logLevel: 'debug' | 'info' | 'warn' | 'error';
 }

@@ -1,3 +1,5 @@
+// ENHANCED TYPES - CREATOR WORKFLOW SUPPORT
+
 export interface MemoryEntry {
   id: string;
   text: string;
@@ -48,6 +50,16 @@ export interface GraphEdge {
   createdAt: Date;
 }
 
+export interface GraphStats {
+  totalNodes: number;
+  totalEdges: number;
+  nodeTypes: Array<{ type: string; count: number }>;
+  edgeTypes: Array<{ type: string; count: number }>;
+  namespaces: Array<{ namespace: string; count: number }>;
+  density: number; // edges / possible edges
+  lastUpdated: Date;
+}
+
 export interface SearchResult {
   memory: MemoryEntry;
   score: number;
@@ -65,10 +77,26 @@ export interface Snapshot {
 }
 
 export interface MemoryGateFilter {
-  prototypeSimilarity: number; // 0-1
-  tfidfRelevance: number; // 0-1
-  llmCompression?: string; // compressed/summarized version
+  prototypeSimilarity: number;
+  tfidfRelevance: number;
+  llmCompression?: string;
   shouldSave: boolean;
+}
+
+export interface BatchMemoryRequest {
+  memories: Array<{
+    text: string;
+    agentId?: string;
+    namespace?: string;
+    tags?: string[];
+    visibility?: "private" | "shared" | "system";
+    forceSave?: boolean;
+  }>;
+}
+
+export interface NamespaceClearRequest {
+  namespace: string;
+  confirm?: boolean;
 }
 
 export interface Config {
@@ -112,25 +140,10 @@ export interface Config {
   logLevel: "debug" | "info" | "warn" | "error";
 }
 
-export interface GraphStats {
-  totalNodes: number;
-  totalEdges: number;
-  nodeTypes: Array<{ type: string; count: number }>;
-  edgeTypes: Array<{ type: string; count: number }>;
-  namespaces: Array<{ namespace: string; count: number }>;
-  density: number;
-  lastUpdated: Date;
-}
-
-export interface BatchMemoryRequest {
-  memories: Array<{
-    text: string;
-    agentId?: string;
-    namespace?: string;
-    tags?: string[];
-    visibility?: "private" | "shared" | "system";
-    forceSave?: boolean;
-  }>;
+export interface GraphReadResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: GraphStats;
 }
 
 export interface BatchAddResponse {
@@ -138,11 +151,6 @@ export interface BatchAddResponse {
   failed: number;
   memoryIds: string[];
   errors: Array<{ index: number; error: string }>;
-}
-
-export interface NamespaceClearRequest {
-  namespace: string;
-  confirm?: boolean;
 }
 
 export interface NamespaceClearResponse {

@@ -1,0 +1,15 @@
+{
+  "embeddingModel": "local",
+  "embeddingDimension": 384,
+  "vectorStore": "sqlite",
+  "vectorStorePath": "./storage/test-vectors.db",
+  "graphStore": "jsonl",
+  "graphStorePath": "./storage/test-graph.jsonl",
+  "snapshotStore": "filesystem",
+  "snapshotPath": "./storage/test-snapshots",
+  "memoryGateEnabled": false,
+  "memoryGateThreshold": 0.3,
+  "maxMemoryEntries": 1000,
+  "similarityThreshold": 0.3,
+  "logLevel": "debug"
+}

@@ -1,0 +1,67 @@
+---
+# EME Podman Compose Configuration
+# Declarative deployment for Echo Memory Engine
+
+version: '3.8'
+
+services:
+  eme:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/eme:latest
+    container_name: echo-memory-engine
+    restart: unless-stopped
+    ports:
+      - "8048:8048"  # Host:Container - MCP HTTP transport
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - MEMORY_GATE_ENABLED=true
+      - SIMILARITY_THRESHOLD=0.3
+    volumes:
+      - eme-storage:/app/storage:Z
+      - ./logs:/app/logs:Z
+      - ./config-example.json:/app/config.json:ro,Z
+    security_opt:
+      - label=disable
+      - no-new-privileges:true
+    read_only: true  # Additional security - container filesystem read-only
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8048/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - eme-network
+
+  # Optional: EME Admin UI (if developed)
+  # eme-admin:
+  #   image: nginx:alpine
+  #   container_name: eme-admin-ui
+  #   ports:
+  #     - "8081:80"
+  #   volumes:
+  #     - ./admin-ui:/usr/share/nginx/html:ro,Z
+  #   depends_on:
+  #     - eme
+  #   networks:
+  #     - eme-network
+
+volumes:
+  eme-storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./storage
+
+networks:
+  eme-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

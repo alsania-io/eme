@@ -3,7 +3,7 @@
 # Build and Test Script for Alsania EME
 # This script builds the TypeScript project and runs basic tests
 
-echo "🚀 Building Alsania Echo Memory Engine..."
+echo "🚀 Building Alsania', Echo Memory Engine..."
 
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
@@ -56,9 +56,9 @@ echo "\nTo use as MCP server:"
 echo "1. Add to your MCP config:"
 echo '{
   "mcpServers": {
-    "alsania-eme": {
+    "eme": {
       "command": "node",
-      "args": ["/home/sigma/Desktop/echo-lab/memory-engine/dist/mcp-server.js"]
+      "args": ["/home/sigma/Desktop/echo-lab/memory-engine/dist/index.js"]
     }
   }
 }'
@@ -70,7 +70,7 @@ echo "  src/graph-store.ts - SQLite graph storage"
 echo "  src/memory-manager.ts - Core memory orchestration"
 echo "  src/mcp-server.ts - MCP server with 10+ tools"
 echo "  src/index.ts - Main entry point"
-echo "\n🚀 Alsania EME MCP Server development complete!"
+echo "\n🚀 Alsania's' EME MCP Server development complete!"
 
 echo "\n📋 Next steps:"
 echo "1. Integrate with AlsaniaMCP (port 8050)"

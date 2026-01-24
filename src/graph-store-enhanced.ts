@@ -1,9 +1,13 @@
-import { GraphNode, GraphEdge } from "./types.js";
+// ENHANCED GRAPH STORE - CREATOR TOOLS
+// Adds critical methods for Aegis workflow
+
+import { GraphNode, GraphEdge, GraphStats } from "./types.js";
 import sqlite3 from "sqlite3";
 import { open, Database } from "sqlite";
 import { randomUUID } from "crypto";
 
 export interface IGraphStore {
+  // Core methods
   addNode(
     node: Omit<GraphNode, "id" | "createdAt" | "updatedAt">,
   ): Promise<string>;
@@ -24,6 +28,18 @@ export interface IGraphStore {
   deleteNode(id: string): Promise<boolean>;
   deleteEdge(id: string): Promise<boolean>;
   clear(): Promise<void>;
+
+  // CREATOR-ADDED: Critical workflow tools
+  getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }>;
+  getGraphStats(): Promise<GraphStats>;
+  clearNamespace(namespace: string): Promise<number>; // Returns number of nodes cleared
+  findNodesByNamespace(namespace: string): Promise<GraphNode[]>;
+  batchAddNodes(
+    nodes: Omit<GraphNode, "id" | "createdAt" | "updatedAt">[],
+  ): Promise<string[]>;
+  batchAddEdges(
+    edges: Omit<GraphEdge, "id" | "createdAt">[],
+  ): Promise<string[]>;
 }
 
 export class SQLiteGraphStore implements IGraphStore {
@@ -39,13 +55,14 @@ export class SQLiteGraphStore implements IGraphStore {
       driver: sqlite3.Database,
     });
 
-    // Create nodes table
+    // Create nodes table with namespace support
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS ${this.nodesTable} (
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
         name TEXT NOT NULL,
         properties TEXT NOT NULL,
+        namespace TEXT DEFAULT 'default',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -74,6 +91,9 @@ export class SQLiteGraphStore implements IGraphStore {
       `CREATE INDEX IF NOT EXISTS idx_node_name ON ${this.nodesTable}(name)`,
     );
     await this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_node_namespace ON ${this.nodesTable}(namespace)`,
+    );
+    await this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_edge_from ON ${this.edgesTable}(from_node)`,
     );
     await this.db.exec(
@@ -91,15 +111,17 @@ export class SQLiteGraphStore implements IGraphStore {
 
     const id = randomUUID();
     const now = new Date();
+    const namespace = node.properties?.namespace || "default";
 
     await this.db.run(
-      `INSERT INTO ${this.nodesTable} (id, type, name, properties, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ${this.nodesTable} (id, type, name, properties, namespace, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         node.type,
         node.name,
-        JSON.stringify(node.properties),
+        JSON.stringify({ ...node.properties, namespace }),
+        namespace,
         now.toISOString(),
         now.toISOString(),
       ],
@@ -188,7 +210,6 @@ export class SQLiteGraphStore implements IGraphStore {
     }
 
     if (properties) {
-      // Simple property matching - in production, you'd want a more sophisticated approach
       const nodeRows = await this.db.all(
         `SELECT * FROM ${this.nodesTable} WHERE type = ? OR type IS NOT NULL`,
         type ? [type] : [],
@@ -423,6 +444,211 @@ export class SQLiteGraphStore implements IGraphStore {
     if (!this.db) throw new Error("Database not initialized");
     await this.db.run(`DELETE FROM ${this.edgesTable}`);
     await this.db.run(`DELETE FROM ${this.nodesTable}`);
+  }
+
+  // ========== CREATOR-ADDED METHODS ==========
+
+  async getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+    if (!this.db) throw new Error("Database not initialized");
+
+    const nodes = await this.db.all(`SELECT * FROM ${this.nodesTable}`);
+    const edges = await this.db.all(`SELECT * FROM ${this.edgesTable}`);
+
+    return {
+      nodes: nodes.map((row) => ({
+        id: row.id,
+        type: row.type as GraphNode["type"],
+        name: row.name,
+        properties: JSON.parse(row.properties),
+        createdAt: new Date(row.created_at),
+        updatedAt: new Date(row.updated_at),
+      })),
+      edges: edges.map((row) => ({
+        id: row.id,
+        from: row.from_node,
+        to: row.to_node,
+        type: row.type as GraphEdge["type"],
+        weight: row.weight,
+        properties: JSON.parse(row.properties),
+        createdAt: new Date(row.created_at),
+      })),
+    };
+  }
+
+  async getGraphStats(): Promise<GraphStats> {
+    if (!this.db) throw new Error("Database not initialized");
+
+    const nodeCount = await this.db.get(
+      `SELECT COUNT(*) as count FROM ${this.nodesTable}`,
+    );
+    const edgeCount = await this.db.get(
+      `SELECT COUNT(*) as count FROM ${this.edgesTable}`,
+    );
+
+    // Get node type distribution
+    const typeDistribution = await this.db.all(
+      `SELECT type, COUNT(*) as count FROM ${this.nodesTable} GROUP BY type ORDER BY count DESC`,
+    );
+
+    // Get edge type distribution
+    const edgeTypeDistribution = await this.db.all(
+      `SELECT type, COUNT(*) as count FROM ${this.edgesTable} GROUP BY type ORDER BY count DESC`,
+    );
+
+    // Get namespace distribution
+    const namespaceDistribution = await this.db.all(
+      `SELECT namespace, COUNT(*) as count FROM ${this.nodesTable} GROUP BY namespace ORDER BY count DESC`,
+    );
+
+    return {
+      totalNodes: nodeCount?.count || 0,
+      totalEdges: edgeCount?.count || 0,
+      nodeTypes: typeDistribution.map((row: any) => ({
+        type: row.type,
+        count: row.count,
+      })),
+      edgeTypes: edgeTypeDistribution.map((row: any) => ({
+        type: row.type,
+        count: row.count,
+      })),
+      namespaces: namespaceDistribution.map((row: any) => ({
+        namespace: row.namespace,
+        count: row.count,
+      })),
+      density:
+        edgeCount?.count && nodeCount?.count
+          ? edgeCount.count / (nodeCount.count * (nodeCount.count - 1))
+          : 0,
+      lastUpdated: new Date(),
+    };
+  }
+
+  async clearNamespace(namespace: string): Promise<number> {
+    if (!this.db) throw new Error("Database not initialized");
+
+    // Get nodes in this namespace
+    const nodes = await this.db.all(
+      `SELECT id FROM ${this.nodesTable} WHERE namespace = ?`,
+      [namespace],
+    );
+
+    if (nodes.length === 0) return 0;
+
+    const nodeIds = nodes.map((row: any) => row.id);
+
+    // Delete edges connected to these nodes
+    await this.db.run(
+      `DELETE FROM ${this.edgesTable} WHERE from_node IN (${nodeIds.map(() => "?").join(",")}) OR to_node IN (${nodeIds.map(() => "?").join(",")})`,
+      [...nodeIds, ...nodeIds],
+    );
+
+    // Delete the nodes
+    await this.db.run(
+      `DELETE FROM ${this.nodesTable} WHERE id IN (${nodeIds.map(() => "?").join(",")})`,
+      nodeIds,
+    );
+
+    return nodeIds.length;
+  }
+
+  async findNodesByNamespace(namespace: string): Promise<GraphNode[]> {
+    if (!this.db) throw new Error("Database not initialized");
+
+    const rows = await this.db.all(
+      `SELECT * FROM ${this.nodesTable} WHERE namespace = ?`,
+      [namespace],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      type: row.type as GraphNode["type"],
+      name: row.name,
+      properties: JSON.parse(row.properties),
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    }));
+  }
+
+  async batchAddNodes(
+    nodes: Omit<GraphNode, "id" | "createdAt" | "updatedAt">[],
+  ): Promise<string[]> {
+    if (!this.db) throw new Error("Database not initialized");
+    if (nodes.length === 0) return [];
+
+    const ids: string[] = [];
+    const now = new Date().toISOString();
+
+    // Use transaction for performance
+    await this.db.run("BEGIN TRANSACTION");
+
+    try {
+      for (const node of nodes) {
+        const id = randomUUID();
+        const namespace = node.properties?.namespace || "default";
+
+        await this.db.run(
+          `INSERT INTO ${this.nodesTable} (id, type, name, properties, namespace, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            node.type,
+            node.name,
+            JSON.stringify({ ...node.properties, namespace }),
+            namespace,
+            now,
+            now,
+          ],
+        );
+
+        ids.push(id);
+      }
+
+      await this.db.run("COMMIT");
+      return ids;
+    } catch (error) {
+      await this.db.run("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async batchAddEdges(
+    edges: Omit<GraphEdge, "id" | "createdAt">[],
+  ): Promise<string[]> {
+    if (!this.db) throw new Error("Database not initialized");
+    if (edges.length === 0) return [];
+
+    const ids: string[] = [];
+    const now = new Date().toISOString();
+
+    await this.db.run("BEGIN TRANSACTION");
+
+    try {
+      for (const edge of edges) {
+        const id = randomUUID();
+
+        await this.db.run(
+          `INSERT INTO ${this.edgesTable} (id, from_node, to_node, type, weight, properties, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            edge.from,
+            edge.to,
+            edge.type,
+            edge.weight,
+            JSON.stringify(edge.properties),
+            now,
+          ],
+        );
+
+        ids.push(id);
+      }
+
+      await this.db.run("COMMIT");
+      return ids;
+    } catch (error) {
+      await this.db.run("ROLLBACK");
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
