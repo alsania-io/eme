@@ -1,7 +1,11 @@
 {
   "name": "@alsania-io/eme",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Echo Memory Engine - Alsania's sovereign memory system",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alsania-dev/eme.git"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -36,37 +40,34 @@
   ],
   "author": "Alsania I/O",
   "license": "MIT",
+  "bin": {
+    "eme": "./dist/index.js"
+  },
   "dependencies": {
     "@dbml/core": "^5.4.1",
     "@exodus/bytes": "^1.9.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
-    "cacache": "^20.0.3",
+    "@qdrant/js-client-rest": "^1.16.2",
+    "better-sqlite3": "^12.6.2",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "glob": "^9.0.0",
-    "lint": "^1.1.2",
     "lru-cache": "^11.2.4",
-    "make-fetch-happen": "^15.0.3",
-    "node-gyp": "^12.1.0",
     "p-limit": "^7.2.0",
     "p-queue": "^9.1.0",
     "rimraf": "^5.0.0",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.0.2",
-    "tar": "^7.5.6",
     "uuid": "^13.0.0",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^25.0.10",
-    "@types/sqlite3": "^5.1.0",
-    "@types/uuid": "^11.0.0",
     "@typescript-eslint/eslint-plugin": "^8.53.1",
     "@typescript-eslint/parser": "^8.53.1",
     "eslint": "^9.39.2",

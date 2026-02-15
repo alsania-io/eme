@@ -1,6 +1,7 @@
 import type { Config, MemoryGateFilter, SearchResult } from "./types.js";
 import { createMemoryManager } from "./memory-manager.js";
 import { EMEMCPServer } from "./mcp-server.js";
+import { loadConfig } from "./config-loader.js";
 
 export { MemoryManager, createMemoryManager } from "./memory-manager.js";
 export { SQLiteVectorStore, createVectorStore } from "./vector-store.js";
@@ -15,6 +16,7 @@ export type {
 } from "./types.js";
 
 export { EMEMCPServer } from "./mcp-server.js";
+export { loadConfig } from "./config-loader.js";
 
 // Default configuration
 export const defaultConfig: Config = {
@@ -100,36 +102,48 @@ if (require.main === module) {
   const command = process.argv[2];
   const args = process.argv.slice(3);
 
-  // Parse config arguments
-  const parseConfigArgs = (args: string[]): Partial<Config> => {
-    const config: Partial<Config> = {};
-    for (let i = 0; i < args.length; i += 2) {
-      if (args[i].startsWith("--") && i + 1 < args.length) {
+  // Parse CLI arguments including --config flag
+  const parseCliArgs = (args: string[]): { configPath?: string; configOverrides: Partial<Config> } => {
+    let configPath: string | undefined;
+    const configOverrides: Partial<Config> = {};
+    
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--config" && i + 1 < args.length) {
+        configPath = args[i + 1];
+        i++; // Skip the next argument (config path value)
+      } else if (args[i].startsWith("--") && i + 1 < args.length) {
         const key = args[i].slice(2);
         const value = args[i + 1];
+        i++; // Skip the next argument
 
         if (key === "embeddingDimension" || key === "maxMemoryEntries") {
-          config[key] = parseInt(value, 10);
+          (configOverrides as any)[key] = parseInt(value, 10);
         } else if (
           key === "similarityThreshold" ||
           key === "memoryGateThreshold"
         ) {
-          config[key] = parseFloat(value);
+          (configOverrides as any)[key] = parseFloat(value);
         } else if (key === "memoryGateEnabled") {
-          config[key] = value.toLowerCase() === "true";
+          (configOverrides as any)[key] = value.toLowerCase() === "true";
         } else {
-          (config as any)[key] = value;
+          (configOverrides as any)[key] = value;
         }
       }
     }
-    return config;
+    return { configPath, configOverrides };
   };
 
   switch (command) {
     case "start":
     case "server":
-      const serverConfig = parseConfigArgs(args);
-      startMCPServer(serverConfig).catch(console.error);
+      (async () => {
+        const { configPath, configOverrides } = parseCliArgs(args);
+        // Load config from file if specified, then apply CLI overrides
+        const loadedConfig = configPath ? loadConfig(configPath) : defaultConfig;
+        const finalConfig = { ...loadedConfig, ...configOverrides };
+        console.error(`[EME] Using vector store: ${finalConfig.vectorStore}`);
+        await startMCPServer(finalConfig);
+      })().catch(console.error);
       break;
 
     case "test":

@@ -2,9 +2,10 @@
 // Adds critical methods for Aegis workflow
 
 import { GraphNode, GraphEdge, GraphStats } from "./types.js";
-import sqlite3 from "sqlite3";
-import { open, Database } from "sqlite";
 import { randomUUID } from "crypto";
+
+// Type alias for better-sqlite3 Database instance (dynamically imported)
+type SQLiteDatabase = InstanceType<typeof import("better-sqlite3")>;
 
 export interface IGraphStore {
   // Core methods
@@ -43,20 +44,19 @@ export interface IGraphStore {
 }
 
 export class SQLiteGraphStore implements IGraphStore {
-  private db: Database | null = null;
+  private db: SQLiteDatabase | null = null;
   private readonly nodesTable = "graph_nodes";
   private readonly edgesTable = "graph_edges";
 
   constructor() {}
 
   async initialize(): Promise<void> {
-    this.db = await open({
-      filename: ":memory:", // TODO: make configurable
-      driver: sqlite3.Database,
-    });
+    // Dynamically import better-sqlite3 only when needed
+    const Database = (await import("better-sqlite3")).default;
+    this.db = new Database(":memory:"); // TODO: make configurable
 
     // Create nodes table with namespace support
-    await this.db.exec(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS ${this.nodesTable} (
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
@@ -69,7 +69,7 @@ export class SQLiteGraphStore implements IGraphStore {
     `);
 
     // Create edges table
-    await this.db.exec(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS ${this.edgesTable} (
         id TEXT PRIMARY KEY,
         from_node TEXT NOT NULL,
@@ -84,22 +84,22 @@ export class SQLiteGraphStore implements IGraphStore {
     `);
 
     // Create indexes
-    await this.db.exec(
+    this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_node_type ON ${this.nodesTable}(type)`,
     );
-    await this.db.exec(
+    this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_node_name ON ${this.nodesTable}(name)`,
     );
-    await this.db.exec(
+    this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_node_namespace ON ${this.nodesTable}(namespace)`,
     );
-    await this.db.exec(
+    this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_edge_from ON ${this.edgesTable}(from_node)`,
     );
-    await this.db.exec(
+    this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_edge_to ON ${this.edgesTable}(to_node)`,
     );
-    await this.db.exec(
+    this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_edge_type ON ${this.edgesTable}(type)`,
     );
   }
@@ -113,18 +113,18 @@ export class SQLiteGraphStore implements IGraphStore {
     const now = new Date();
     const namespace = node.properties?.namespace || "default";
 
-    await this.db.run(
+    const stmt = this.db.prepare(
       `INSERT INTO ${this.nodesTable} (id, type, name, properties, namespace, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        node.type,
-        node.name,
-        JSON.stringify({ ...node.properties, namespace }),
-        namespace,
-        now.toISOString(),
-        now.toISOString(),
-      ],
+    );
+    stmt.run(
+      id,
+      node.type,
+      node.name,
+      JSON.stringify({ ...node.properties, namespace }),
+      namespace,
+      now.toISOString(),
+      now.toISOString(),
     );
 
     return id;
@@ -136,18 +136,18 @@ export class SQLiteGraphStore implements IGraphStore {
     const id = randomUUID();
     const now = new Date();
 
-    await this.db.run(
+    const stmt = this.db.prepare(
       `INSERT INTO ${this.edgesTable} (id, from_node, to_node, type, weight, properties, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        edge.from,
-        edge.to,
-        edge.type,
-        edge.weight,
-        JSON.stringify(edge.properties),
-        now.toISOString(),
-      ],
+    );
+    stmt.run(
+      id,
+      edge.from,
+      edge.to,
+      edge.type,
+      edge.weight,
+      JSON.stringify(edge.properties),
+      now.toISOString(),
     );
 
     return id;
@@ -156,10 +156,10 @@ export class SQLiteGraphStore implements IGraphStore {
   async getNode(id: string): Promise<GraphNode | null> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const row = await this.db.get(
+    const stmt = this.db.prepare(
       `SELECT * FROM ${this.nodesTable} WHERE id = ?`,
-      [id],
     );
+    const row = stmt.get(id) as any;
 
     if (!row) return null;
 
@@ -176,10 +176,10 @@ export class SQLiteGraphStore implements IGraphStore {
   async getEdge(id: string): Promise<GraphEdge | null> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const row = await this.db.get(
+    const stmt = this.db.prepare(
       `SELECT * FROM ${this.edgesTable} WHERE id = ?`,
-      [id],
     );
+    const row = stmt.get(id) as any;
 
     if (!row) return null;
 
@@ -200,20 +200,12 @@ export class SQLiteGraphStore implements IGraphStore {
   ): Promise<GraphNode[]> {
     if (!this.db) throw new Error("Database not initialized");
 
-    let query = `SELECT * FROM ${this.nodesTable}`;
-    const params: any[] = [];
-    const conditions: string[] = [];
-
-    if (type) {
-      conditions.push("type = ?");
-      params.push(type);
-    }
-
     if (properties) {
-      const nodeRows = await this.db.all(
+      // Simple property matching - in production, you'd want a more sophisticated approach
+      const stmt = this.db.prepare(
         `SELECT * FROM ${this.nodesTable} WHERE type = ? OR type IS NOT NULL`,
-        type ? [type] : [],
       );
+      const nodeRows = (type ? stmt.all(type) : stmt.all()) as any[];
       return nodeRows
         .map((row) => ({
           id: row.id,
@@ -230,11 +222,16 @@ export class SQLiteGraphStore implements IGraphStore {
         });
     }
 
-    if (conditions.length > 0) {
-      query += " WHERE " + conditions.join(" AND ");
+    let query = `SELECT * FROM ${this.nodesTable}`;
+    const params: any[] = [];
+
+    if (type) {
+      query += " WHERE type = ?";
+      params.push(type);
     }
 
-    const rows = await this.db.all(query, params);
+    const stmt = this.db.prepare(query);
+    const rows = (params.length > 0 ? stmt.all(...params) : stmt.all()) as any[];
     return rows.map((row) => ({
       id: row.id,
       type: row.type as GraphNode["type"],
@@ -275,7 +272,8 @@ export class SQLiteGraphStore implements IGraphStore {
       query += " WHERE " + conditions.join(" AND ");
     }
 
-    const rows = await this.db.all(query, params);
+    const stmt = this.db.prepare(query);
+    const rows = (params.length > 0 ? stmt.all(...params) : stmt.all()) as any[];
     return rows.map((row) => ({
       id: row.id,
       from: row.from_node,
@@ -307,7 +305,8 @@ export class SQLiteGraphStore implements IGraphStore {
       params.push(edgeType);
     }
 
-    const rows = await this.db.all(query, params);
+    const stmt = this.db.prepare(query);
+    const rows = stmt.all(...params) as any[];
     return rows.map((row) => ({
       edge: {
         id: row.id,
@@ -359,12 +358,12 @@ export class SQLiteGraphStore implements IGraphStore {
     }
 
     values.push(id);
-    const result = await this.db.run(
+    const stmt = this.db.prepare(
       `UPDATE ${this.nodesTable} SET ${setClauses.join(", ")} WHERE id = ?`,
-      values,
     );
+    const result = stmt.run(...values);
 
-    return result.changes ? result.changes > 0 : false;
+    return result.changes > 0;
   }
 
   async updateEdge(id: string, updates: Partial<GraphEdge>): Promise<boolean> {
@@ -403,47 +402,47 @@ export class SQLiteGraphStore implements IGraphStore {
     }
 
     values.push(id);
-    const result = await this.db.run(
+    const stmt = this.db.prepare(
       `UPDATE ${this.edgesTable} SET ${setClauses.join(", ")} WHERE id = ?`,
-      values,
     );
+    const result = stmt.run(...values);
 
-    return result.changes ? result.changes > 0 : false;
+    return result.changes > 0;
   }
 
   async deleteNode(id: string): Promise<boolean> {
     if (!this.db) throw new Error("Database not initialized");
 
     // First delete all edges connected to this node
-    await this.db.run(
+    const deleteEdgesStmt = this.db.prepare(
       `DELETE FROM ${this.edgesTable} WHERE from_node = ? OR to_node = ?`,
-      [id, id],
     );
+    deleteEdgesStmt.run(id, id);
 
     // Then delete the node
-    const result = await this.db.run(
+    const stmt = this.db.prepare(
       `DELETE FROM ${this.nodesTable} WHERE id = ?`,
-      [id],
     );
+    const result = stmt.run(id);
 
-    return result.changes ? result.changes > 0 : false;
+    return result.changes > 0;
   }
 
   async deleteEdge(id: string): Promise<boolean> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const result = await this.db.run(
+    const stmt = this.db.prepare(
       `DELETE FROM ${this.edgesTable} WHERE id = ?`,
-      [id],
     );
+    const result = stmt.run(id);
 
-    return result.changes ? result.changes > 0 : false;
+    return result.changes > 0;
   }
 
   async clear(): Promise<void> {
     if (!this.db) throw new Error("Database not initialized");
-    await this.db.run(`DELETE FROM ${this.edgesTable}`);
-    await this.db.run(`DELETE FROM ${this.nodesTable}`);
+    this.db.exec(`DELETE FROM ${this.edgesTable}`);
+    this.db.exec(`DELETE FROM ${this.nodesTable}`);
   }
 
   // ========== CREATOR-ADDED METHODS ==========
@@ -451,8 +450,11 @@ export class SQLiteGraphStore implements IGraphStore {
   async getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const nodes = await this.db.all(`SELECT * FROM ${this.nodesTable}`);
-    const edges = await this.db.all(`SELECT * FROM ${this.edgesTable}`);
+    const nodesStmt = this.db.prepare(`SELECT * FROM ${this.nodesTable}`);
+    const edgesStmt = this.db.prepare(`SELECT * FROM ${this.edgesTable}`);
+
+    const nodes = nodesStmt.all() as any[];
+    const edges = edgesStmt.all() as any[];
 
     return {
       nodes: nodes.map((row) => ({
@@ -478,27 +480,33 @@ export class SQLiteGraphStore implements IGraphStore {
   async getGraphStats(): Promise<GraphStats> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const nodeCount = await this.db.get(
+    const nodeCountStmt = this.db.prepare(
       `SELECT COUNT(*) as count FROM ${this.nodesTable}`,
     );
-    const edgeCount = await this.db.get(
+    const edgeCountStmt = this.db.prepare(
       `SELECT COUNT(*) as count FROM ${this.edgesTable}`,
     );
 
+    const nodeCount = nodeCountStmt.get() as any;
+    const edgeCount = edgeCountStmt.get() as any;
+
     // Get node type distribution
-    const typeDistribution = await this.db.all(
+    const typeDistStmt = this.db.prepare(
       `SELECT type, COUNT(*) as count FROM ${this.nodesTable} GROUP BY type ORDER BY count DESC`,
     );
+    const typeDistribution = typeDistStmt.all() as any[];
 
     // Get edge type distribution
-    const edgeTypeDistribution = await this.db.all(
+    const edgeTypeDistStmt = this.db.prepare(
       `SELECT type, COUNT(*) as count FROM ${this.edgesTable} GROUP BY type ORDER BY count DESC`,
     );
+    const edgeTypeDistribution = edgeTypeDistStmt.all() as any[];
 
     // Get namespace distribution
-    const namespaceDistribution = await this.db.all(
+    const namespaceDistStmt = this.db.prepare(
       `SELECT namespace, COUNT(*) as count FROM ${this.nodesTable} GROUP BY namespace ORDER BY count DESC`,
     );
+    const namespaceDistribution = namespaceDistStmt.all() as any[];
 
     return {
       totalNodes: nodeCount?.count || 0,
@@ -527,26 +535,26 @@ export class SQLiteGraphStore implements IGraphStore {
     if (!this.db) throw new Error("Database not initialized");
 
     // Get nodes in this namespace
-    const nodes = await this.db.all(
+    const nodesStmt = this.db.prepare(
       `SELECT id FROM ${this.nodesTable} WHERE namespace = ?`,
-      [namespace],
     );
+    const nodes = nodesStmt.all(namespace) as any[];
 
     if (nodes.length === 0) return 0;
 
     const nodeIds = nodes.map((row: any) => row.id);
 
     // Delete edges connected to these nodes
-    await this.db.run(
+    const deleteEdgesStmt = this.db.prepare(
       `DELETE FROM ${this.edgesTable} WHERE from_node IN (${nodeIds.map(() => "?").join(",")}) OR to_node IN (${nodeIds.map(() => "?").join(",")})`,
-      [...nodeIds, ...nodeIds],
     );
+    deleteEdgesStmt.run([...nodeIds, ...nodeIds]);
 
     // Delete the nodes
-    await this.db.run(
+    const deleteNodesStmt = this.db.prepare(
       `DELETE FROM ${this.nodesTable} WHERE id IN (${nodeIds.map(() => "?").join(",")})`,
-      nodeIds,
     );
+    deleteNodesStmt.run(nodeIds);
 
     return nodeIds.length;
   }
@@ -554,10 +562,10 @@ export class SQLiteGraphStore implements IGraphStore {
   async findNodesByNamespace(namespace: string): Promise<GraphNode[]> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const rows = await this.db.all(
+    const stmt = this.db.prepare(
       `SELECT * FROM ${this.nodesTable} WHERE namespace = ?`,
-      [namespace],
     );
+    const rows = stmt.all(namespace) as any[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -579,36 +587,32 @@ export class SQLiteGraphStore implements IGraphStore {
     const now = new Date().toISOString();
 
     // Use transaction for performance
-    await this.db.run("BEGIN TRANSACTION");
+    const insertStmt = this.db.prepare(
+      `INSERT INTO ${this.nodesTable} (id, type, name, properties, namespace, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
 
-    try {
+    const insertMany = this.db.transaction((nodes: any[]) => {
       for (const node of nodes) {
         const id = randomUUID();
         const namespace = node.properties?.namespace || "default";
 
-        await this.db.run(
-          `INSERT INTO ${this.nodesTable} (id, type, name, properties, namespace, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [
-            id,
-            node.type,
-            node.name,
-            JSON.stringify({ ...node.properties, namespace }),
-            namespace,
-            now,
-            now,
-          ],
+        insertStmt.run(
+          id,
+          node.type,
+          node.name,
+          JSON.stringify({ ...node.properties, namespace }),
+          namespace,
+          now,
+          now,
         );
 
         ids.push(id);
       }
+    });
 
-      await this.db.run("COMMIT");
-      return ids;
-    } catch (error) {
-      await this.db.run("ROLLBACK");
-      throw error;
-    }
+    insertMany(nodes);
+    return ids;
   }
 
   async batchAddEdges(
@@ -620,40 +624,36 @@ export class SQLiteGraphStore implements IGraphStore {
     const ids: string[] = [];
     const now = new Date().toISOString();
 
-    await this.db.run("BEGIN TRANSACTION");
+    const insertStmt = this.db.prepare(
+      `INSERT INTO ${this.edgesTable} (id, from_node, to_node, type, weight, properties, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
 
-    try {
+    const insertMany = this.db.transaction((edges: any[]) => {
       for (const edge of edges) {
         const id = randomUUID();
 
-        await this.db.run(
-          `INSERT INTO ${this.edgesTable} (id, from_node, to_node, type, weight, properties, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [
-            id,
-            edge.from,
-            edge.to,
-            edge.type,
-            edge.weight,
-            JSON.stringify(edge.properties),
-            now,
-          ],
+        insertStmt.run(
+          id,
+          edge.from,
+          edge.to,
+          edge.type,
+          edge.weight,
+          JSON.stringify(edge.properties),
+          now,
         );
 
         ids.push(id);
       }
+    });
 
-      await this.db.run("COMMIT");
-      return ids;
-    } catch (error) {
-      await this.db.run("ROLLBACK");
-      throw error;
-    }
+    insertMany(edges);
+    return ids;
   }
 
   async close(): Promise<void> {
     if (this.db) {
-      await this.db.close();
+      this.db.close();
     }
   }
 }

@@ -15,7 +15,7 @@ const AddMemorySchema = z.object({
   namespace: z.string().optional().default("default"),
   tags: z.array(z.string()).optional().default([]),
   visibility: z
-    .enum(["private", "shared", "system"])
+    .enum(["private", "shared", "system"] as const)
     .optional()
     .default("private"),
   forceSave: z.boolean().optional().default(false),
@@ -32,7 +32,7 @@ const UpdateMemorySchema = z.object({
   id: z.string(),
   text: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  visibility: z.enum(["private", "shared", "system"]).optional(),
+  visibility: z.enum(["private", "shared", "system"] as const).optional(),
 });
 
 const DeleteMemorySchema = z.object({
@@ -46,34 +46,17 @@ const ListMemoriesSchema = z.object({
 });
 
 const GraphAddNodeSchema = z.object({
-  type: z.enum([
-    "concept",
-    "event",
-    "person",
-    "tool",
-    "task",
-    "entity",
-    "project",
-    "state",
-  ]),
+  type: z.enum(["concept", "event", "person", "tool", "task", "entity", "project", "state"] as const),
   name: z.string(),
-  properties: z.record(z.any()).optional().default({}),
+  properties: z.record(z.string(), z.any()).optional().default({}),
 });
 
 const GraphAddEdgeSchema = z.object({
   from: z.string(),
   to: z.string(),
-  type: z.enum([
-    "related_to",
-    "is",
-    "part_of",
-    "changed_from",
-    "updated_on",
-    "owned_by",
-    "assigned_to",
-  ]),
+  type: z.enum(["related_to", "is", "part_of", "changed_from", "updated_on", "owned_by", "assigned_to"] as const),
   weight: z.number().optional().default(1.0),
-  properties: z.record(z.any()).optional().default({}),
+  properties: z.record(z.string(), z.any()).optional().default({}),
 });
 
 const SnapshotSchema = z.object({
@@ -93,7 +76,7 @@ const BatchAddMemoriesSchema = z.object({
       namespace: z.string().optional().default("default"),
       tags: z.array(z.string()).optional().default([]),
       visibility: z
-        .enum(["private", "shared", "system"])
+        .enum(["private", "shared", "system"] as const)
         .optional()
         .default("private"),
       forceSave: z.boolean().optional().default(false),
@@ -872,8 +855,10 @@ export class EMEMCPServer {
         }
       } catch (error) {
         if (error instanceof z.ZodError) {
+          const zodError = error as any;
+          const errorMessages = zodError.errors.map((err: any) => `${err.path}: ${err.message}`);
           throw new Error(
-            `Invalid parameters: ${error.errors.map((e) => `${e.path}: ${e.message}`).join(", ")}`,
+            `Invalid parameters: ${errorMessages.join(", ")}`,
           );
         }
         throw error;

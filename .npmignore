@@ -1,0 +1,66 @@
+# Source files (users will use compiled JavaScript)
+src/
+
+# TypeScript configuration and outputs
+tsconfig.json
+*.tsbuildinfo
+
+# Test files
+tests/
+
+# Documentation
+docs/
+
+# Logs and temporary files
+logs/
+*.log
+
+# Runtime data
+storage/
+*.db
+*.db-*
+*.pid
+
+# Environment files
+.env
+.env.*
+
+# Deployment and development scripts
+*.sh
+Containerfile
+podman-compose.yaml
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Python files (from engine directory)
+engine/
+*.py
+__pycache__/
+
+# Git files
+.git/
+.github/
+.gitignore
+
+# Configuration examples (except package.json)
+config-*.json
+mcp-config.json
+
+# Source maps (optional - include if you want debugging)
+*.map
+eme-nyx-wrapper.js
+STARTUP_GUIDE.md
+eslint.config.js
