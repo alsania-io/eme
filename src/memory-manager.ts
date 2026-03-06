@@ -1,6 +1,3 @@
-// FIXED MEMORY GATE - CREATOR MODE
-// Adjusted for Aegis/Sigma/Alsania workflow
-
 import {
   MemoryEntry,
   GraphNode,
@@ -8,18 +5,22 @@ import {
   SearchResult,
   MemoryGateFilter,
   Config,
+  SnapshotMetadata,
+  GraphStats,
 } from "./types.js";
 import { IVectorStore, createVectorStore } from "./vector-store.js";
 import { IGraphStore, createGraphStore } from "./graph-store.js";
+import { createSnapshotStore, ISnapshotStore } from "./snapshot-store.js";
 import { randomUUID } from "crypto";
 
 // Simple local embedding model simulation
-class LocalEmbeddingModel {
+// Remove duplicate import - already imported via openrouter
+import { EmbeddingProvider as IEmbeddingProvider } from './embeddings/types.js';
+
+class LocalEmbeddingModel implements IEmbeddingProvider {
   async embed(text: string): Promise<number[]> {
-    // TODO: Replace with actual embedding model
     const words = text.toLowerCase().split(/\s+/);
     const embedding = new Array(384).fill(0);
-
     words.forEach((word, idx) => {
       const hash = this.hashString(word);
       const position = hash % embedding.length;
@@ -33,6 +34,14 @@ class LocalEmbeddingModel {
     return embedding;
   }
 
+  embedBatch?(texts: string[]): Promise<number[][]> {
+    return Promise.all(texts.map(t => this.embed(t)));
+  }
+
+  getDimension(): number {
+    return 384;
+  }
+
   private hashString(str: string): number {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
@@ -44,134 +53,248 @@ class LocalEmbeddingModel {
   }
 }
 
-export class MemoryManager {
-  private vectorStore: IVectorStore;
-  private graphStore: IGraphStore;
-  private embeddingModel: LocalEmbeddingModel;
-  private config: Config;
+import { OpenRouterEmbeddingProvider } from './embeddings/openrouter.js';
 
-  // Public getter for graph operations
-  public getGraphStore(): IGraphStore {
-    return this.graphStore;
-  }
+interface EmbeddingProvider {
+  embed(text: string): Promise<number[]>;
+  embedBatch?(texts: string[]): Promise<number[][]>;
+  getDimension(): number;
+}
+
+class EmbeddingModel {
+  private provider: EmbeddingProvider;
+  private config: Config;
+  private fallbackProvider: LocalEmbeddingModel;
 
   constructor(config: Config) {
     this.config = config;
-    const store = createVectorStore(config);
-    // Handle both sync and async vector store creation
-    if (store instanceof Promise) {
-      // For now, we'll throw an error since we only support sync stores
-      throw new Error(
-        "Async vector stores not yet supported. Use SQLite store.",
-      );
+    console.log('[EmbeddingModel] Config:', JSON.stringify({
+      model: config.embeddingModel,
+      dimension: config.embeddingDimension,
+      hasApiKey: !!config.openRouterApiKey,
+      modelPath: config.embeddingModelPath
+    }, null, 2));
+    this.fallbackProvider = new LocalEmbeddingModel();
+    this.provider = this.createProvider();
+    console.log('[EmbeddingModel] Using provider type:', this.provider.constructor.name);
+  }
+
+  private createProvider(): EmbeddingProvider {
+    // Try to use configured provider
+    if (this.config.embeddingModel === ('openrouter' as any) && this.config.openRouterApiKey) {
+      try {
+        console.log('[Embedding] Initializing OpenRouter provider');
+        return new OpenRouterEmbeddingProvider({
+          apiKey: this.config.openRouterApiKey,
+          model: this.config.embeddingModelPath,
+          dimension: this.config.embeddingDimension,
+          referer: this.config.openRouterReferer,
+          title: this.config.openRouterTitle,
+        });
+      } catch (error) {
+        console.error('[Embedding] Failed to initialize OpenRouter, falling back to local:', error);
+        return this.fallbackProvider;
+      }
     }
-    this.vectorStore = store;
-    this.graphStore = createGraphStore();
-    this.embeddingModel = new LocalEmbeddingModel();
+    
+    // Default to local
+    console.log('[Embedding] Using local embedding model');
+    return this.fallbackProvider;
+  }
+
+  async embed(text: string): Promise<number[]> {
+    try {
+      const embedding = await this.provider.embed(text);
+      
+      // Verify dimension matches config
+      if (embedding.length !== this.config.embeddingDimension) {
+        console.warn(`[Embedding] Dimension mismatch: got ${embedding.length}, expected ${this.config.embeddingDimension}`);
+        
+        // Try fallback if configured
+        if (this.config.fallbackEmbeddingModel === 'local' && this.provider !== this.fallbackProvider) {
+          console.log('[Embedding] Falling back to local model');
+          return this.fallbackProvider.embed(text);
+        }
+      }
+      
+      return embedding;
+    } catch (error) {
+      console.error('[Embedding] Provider failed, using fallback:', error);
+      return this.fallbackProvider.embed(text);
+    }
+  }
+
+  getDimension(): number {
+    return this.config.embeddingDimension;
+  }
+}
+
+export interface MemoryManager {
+  // Core Memory Methods
+  addMemory(
+    text: string,
+    agentId: string,
+    namespace: string,
+    tags: string[],
+    visibility: "private" | "shared" | "system",
+  ): Promise<string>;
+  searchMemories(
+    query: string,
+    limit: number,
+    namespace?: string,
+  ): Promise<SearchResult[]>;
+  getMemory(id: string): Promise<MemoryEntry | null>;
+  updateMemory(id: string, updates: Partial<MemoryEntry>): Promise<void>;
+  deleteMemory(id: string): Promise<void>;
+
+  // Graph Methods
+  getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }>;
+  getGraphStats(): Promise<GraphStats>;
+
+  // Entity & Relation Methods (Match MCP Server types)
+  createEntities(
+    entities: Array<{
+      name?: string;
+      observations?: string[];
+      entityType?: string;
+    }>,
+  ): Promise<{ id: string; name: string }[]>;
+  deleteEntities(entityNames: string[]): Promise<{ deleted: number }>;
+  createRelations(
+    relations: Array<{
+      from?: string;
+      to?: string;
+      relationType?: string;
+    }>,
+  ): Promise<{ id: string }[]>;
+  deleteRelations(
+    relations: Array<{
+      from?: string;
+      to?: string;
+      relationType?: string;
+    }>,
+  ): Promise<{ deleted: number }>;
+  searchNodes(query: string, limit?: number): Promise<GraphNode[]>;
+  openNodes(names: string[]): Promise<GraphNode[]>;
+
+  // Observation Methods (Match MCP Server types)
+  addObservations(
+    observations: Array<{
+      entityName?: string;
+      contents?: string[];
+    }>,
+  ): Promise<string[]>;
+  deleteObservations(
+    deletions: Array<{
+      observations?: string[];
+      entityName?: string;
+    }>,
+  ): Promise<{ deleted: number }>;
+
+  // Snapshot Methods
+  createSnapshot(
+    name: string,
+    type: "memory" | "graph" | "full",
+    description?: string,
+  ): Promise<{ id: string; cid?: string; size: number }>;
+  listSnapshots(
+    type?: "memory" | "graph" | "full",
+  ): Promise<SnapshotMetadata[]>;
+  loadSnapshot(id: string): Promise<any | null>;
+  deleteSnapshot(id: string): Promise<void>;
+
+  // Lifecycle
+  close(): Promise<void>;
+}
+
+class MemoryManagerImpl implements MemoryManager {
+  private vectorStore: IVectorStore;
+  private graphStore: IGraphStore;
+  private snapshotStore: ISnapshotStore;
+  private embeddingModel: EmbeddingModel;
+  private config: Config;
+  private initialized: boolean = false;
+
+  constructor(config: Config) {
+    this.config = config;
+    this.embeddingModel = new EmbeddingModel(this.config);
   }
 
   async initialize(): Promise<void> {
-    await (this.vectorStore as any).initialize?.();
-    await (this.graphStore as any).initialize?.();
+    if (this.initialized) return;
+    this.vectorStore = await createVectorStore(this.config);
+    this.graphStore = createGraphStore();
+    this.snapshotStore = await createSnapshotStore(this.config);
+
+    if ("initialize" in this.graphStore) {
+      await (this.graphStore as any).initialize();
+    }
+
+    this.initialized = true;
+    console.log("[MemoryManager] Initialized with all stores");
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
   }
 
   private async memoryGateFilter(
     text: string,
-    _embedding: number[],
-    metadata: MemoryEntry["metadata"],
+    embedding: number[],
+    metadata: {
+      agentId: string;
+      namespace: string;
+      tags: string[];
+      visibility: "private" | "shared" | "system";
+    },
   ): Promise<MemoryGateFilter> {
-    // CREATOR-FIXED: Adjusted thresholds for OUR workflow
-    const prototypeSimilarity = await this.calculatePrototypeSimilarity(
+    if (!this.config.memoryGateEnabled) {
+      return {
+        prototypeSimilarity: 1.0,
+        tfidfRelevance: 1.0,
+        shouldSave: true,
+      };
+    }
+    const prototypeSimilarity = this.calculatePrototypeSimilarity(
       text,
       metadata,
     );
-
-    // CREATOR-FIXED: Lower TF-IDF threshold
     const tfidfRelevance = await this.calculateTfidfRelevance(
       text,
       metadata.namespace,
     );
-
-    // CREATOR-FIXED: More permissive thresholds
-    const shouldSave =
-      prototypeSimilarity > 0.3 ||
-      tfidfRelevance > 0.2 ||
-      metadata.agentId === "aegis" ||
-      metadata.agentId === "sigma";
-
-    // CREATOR-FIXED: Always save creator memories
-    const isCreatorMemory =
-      metadata.agentId === "aegis" ||
-      metadata.agentId === "sigma" ||
-      metadata.namespace.includes("alsania");
-
-    let llmCompression: string | undefined;
-    if ((shouldSave || isCreatorMemory) && text.length > 200) {
-      llmCompression = text.substring(0, 197) + "...";
-    }
+    const score = (prototypeSimilarity + tfidfRelevance) / 2;
 
     return {
       prototypeSimilarity,
       tfidfRelevance,
-      llmCompression,
-      shouldSave: shouldSave || isCreatorMemory,
+      shouldSave: score >= this.config.memoryGateThreshold,
     };
   }
 
-  private async calculatePrototypeSimilarity(
+  private calculatePrototypeSimilarity(
     text: string,
-    metadata: MemoryEntry["metadata"],
-  ): Promise<number> {
-    // CREATOR-FIXED: OUR prototypes for Aegis/Sigma/Alsania workflow
+    metadata: { agentId: string },
+  ): number {
     const ourPrototypes = [
-      // Agent names
-      "aegis",
       "sigma",
-      "echo",
-      "alsania",
-      "deepseek",
-      "nyx",
-      // Project terms
-      "eme",
-      "memory",
-      "engine",
-      "gate",
-      "vector",
-      "graph",
-      "snapshot",
-      "project",
-      "status",
-      "update",
-      "mission",
-      "task",
-      "command",
-      // Workflow terms
-      "test",
-      "verify",
-      "deploy",
-      "build",
-      "fix",
-      "config",
-      "setting",
-      "tool",
-      "mcp",
-      "integration",
-      "persistent",
-      "chat",
-      "session",
-      // Action terms
-      "complete",
-      "finish",
-      "ready",
+      "aegis",
+      "shield",
       "working",
       "operational",
-      "shield",
       "guardian",
       "creator",
       "user",
       "memory-cache",
+      "ipfs",
+      "helia",
+      "cid",
+      "ipns",
+      "pin",
+      "decentralized",
     ];
-
     const textLower = text.toLowerCase();
     let matches = 0;
     ourPrototypes.forEach((proto) => {
@@ -180,7 +303,6 @@ export class MemoryManager {
       }
     });
 
-    // CREATOR-FIXED: Boost score for creator agents
     const creatorBoost =
       metadata.agentId === "aegis" || metadata.agentId === "sigma" ? 0.3 : 0;
 
@@ -191,7 +313,6 @@ export class MemoryManager {
     _text: string,
     _namespace: string,
   ): Promise<number> {
-    // CREATOR-FIXED: Always return decent relevance for now
     return 0.8;
   }
 
@@ -200,12 +321,11 @@ export class MemoryManager {
     agentId: string,
     namespace: string = "default",
     tags: string[] = [],
-    visibility: MemoryEntry["metadata"]["visibility"] = "private",
-    forceSave: boolean = false,
-  ): Promise<{ id: string | null; filter: MemoryGateFilter }> {
+    visibility: "private" | "shared" | "system" = "shared",
+  ): Promise<string> {
+    await this.ensureInitialized();
     const embedding = await this.embeddingModel.embed(text);
-
-    const metadata: MemoryEntry["metadata"] = {
+    const metadata = {
       agentId,
       namespace,
       tags,
@@ -214,224 +334,311 @@ export class MemoryManager {
       version: 1,
     };
 
-    // Apply memory gate if enabled
     const filter = await this.memoryGateFilter(text, embedding, metadata);
 
-    // CREATOR-FIXED: Always allow forceSave from creators
-    const isCreator = agentId === "aegis" || agentId === "sigma";
-    const shouldBypassGate =
-      !this.config.memoryGateEnabled || forceSave || isCreator;
-
-    if (!filter.shouldSave && !shouldBypassGate) {
-      return { id: null, filter };
+    if (!filter.shouldSave) {
+      throw new Error("Memory rejected by memory gate");
     }
 
-    // Create memory entry
-    const memoryEntry: Omit<MemoryEntry, "id" | "createdAt" | "updatedAt"> = {
+    const id = await this.vectorStore.add({
       text: filter.llmCompression || text,
       embedding,
       metadata,
-    };
-
-    const id = await this.vectorStore.add(memoryEntry);
-
-    // CREATOR-FIXED: Always create graph nodes for creator memories
-    const shouldCreateGraph = filter.prototypeSimilarity > 0.5 || isCreator;
-    if (shouldCreateGraph) {
-      await this.createGraphNodesForMemory(id, text, metadata);
-    }
-
-    return { id, filter };
-  }
-
-  private async createGraphNodesForMemory(
-    memoryId: string,
-    text: string,
-    metadata: MemoryEntry["metadata"],
-  ): Promise<void> {
-    if (this.config.graphStore === "memory") return;
-
-    // Create a node for this memory
-    const memoryNode: Omit<GraphNode, "id" | "createdAt" | "updatedAt"> = {
-      type: "event",
-      name: `Memory: ${text.substring(0, 50)}...`,
-      properties: {
-        memoryId,
-        textPreview: text.substring(0, 100),
-        agentId: metadata.agentId,
-        namespace: metadata.namespace,
-        tags: metadata.tags,
-        isCreator: metadata.agentId === "aegis" || metadata.agentId === "sigma",
-      },
-    };
-
-    const nodeId = await this.graphStore.addNode(memoryNode);
-
-    // Link to agent node
-    const agentNode = await this.findOrCreateAgentNode(metadata.agentId);
-    if (agentNode) {
-      const edge: Omit<GraphEdge, "id" | "createdAt"> = {
-        from: agentNode,
-        to: nodeId,
-        type: "related_to",
-        weight:
-          metadata.agentId === "aegis" || metadata.agentId === "sigma"
-            ? 1.0
-            : 0.8,
-        properties: {
-          relation: "created",
-          creator: metadata.agentId === "aegis" || metadata.agentId === "sigma",
-        },
-      };
-      await this.graphStore.addEdge(edge);
-    }
-
-    // Link to tag nodes
-    for (const tag of metadata.tags) {
-      const tagNode = await this.findOrCreateTagNode(tag);
-      const tagEdge: Omit<GraphEdge, "id" | "createdAt"> = {
-        from: nodeId,
-        to: tagNode,
-        type: "related_to",
-        weight: 0.8,
-        properties: { relation: "tagged_with" },
-      };
-      await this.graphStore.addEdge(tagEdge);
-    }
-  }
-
-  private async findOrCreateAgentNode(agentId: string): Promise<string | null> {
-    const existingNodes = await this.graphStore.findNodes("person", {
-      agentId,
     });
-    if (existingNodes.length > 0) {
-      return existingNodes[0].id;
-    }
 
-    const isCreator = agentId === "aegis" || agentId === "sigma";
-    const agentNode: Omit<GraphNode, "id" | "createdAt" | "updatedAt"> = {
-      type: "person",
-      name: isCreator ? `Creator: ${agentId}` : `Agent: ${agentId}`,
+    await this.graphStore.addNode({
+      type: "entity",
+      name: text.substring(0, 50) + (text.length > 50 ? "..." : ""),
       properties: {
+        memoryId: id,
+        text: filter.llmCompression || text,
         agentId,
-        isCreator,
-        role: isCreator ? "creator" : "agent",
+        namespace,
+        tags,
+        visibility,
+        timestamp: metadata.timestamp,
       },
-    };
+    });
 
-    return await this.graphStore.addNode(agentNode);
+    return id;
   }
 
-  private async findOrCreateTagNode(tag: string): Promise<string> {
-    const existingNodes = await this.graphStore.findNodes("concept", { tag });
-    if (existingNodes.length > 0) {
-      return existingNodes[0].id;
-    }
-
-    const tagNode: Omit<GraphNode, "id" | "createdAt" | "updatedAt"> = {
-      type: "concept",
-      name: `Tag: ${tag}`,
-      properties: { tag },
-    };
-
-    return await this.graphStore.addNode(tagNode);
-  }
-
-  async search(
+  async searchMemories(
     query: string,
     limit: number = 5,
     namespace?: string,
-    includeGraph: boolean = true,
   ): Promise<SearchResult[]> {
+    await this.ensureInitialized();
     const queryEmbedding = await this.embeddingModel.embed(query);
-    const vectorResults = await this.vectorStore.search(
+    const results = await this.vectorStore.search(
       queryEmbedding,
-      limit * 2,
+      limit,
       namespace,
     );
 
-    const results: SearchResult[] = [];
-
-    for (const { entry, score } of vectorResults) {
-      const result: SearchResult = {
-        memory: entry,
-        score,
-      };
-
-      if (includeGraph && this.config.graphStore !== "memory") {
-        const memoryNodes = await this.graphStore.findNodes("event", {
-          memoryId: entry.id,
-        });
-        if (memoryNodes.length > 0) {
-          const neighbors = await this.graphStore.getNeighbors(
-            memoryNodes[0].id,
-          );
-          result.graphContext = neighbors.map((n) => n.node);
-        }
-      }
-
-      results.push(result);
-    }
-
-    return results.sort((a, b) => b.score - a.score).slice(0, limit);
+    return results.map((result) => ({
+      memory: result.entry,
+      score: result.score,
+    }));
   }
 
   async getMemory(id: string): Promise<MemoryEntry | null> {
-    return await this.vectorStore.get(id);
+    await this.ensureInitialized();
+    return this.vectorStore.get(id);
   }
 
-  async updateMemory(
-    id: string,
-    updates: Partial<MemoryEntry>,
-  ): Promise<boolean> {
-    if (updates.text && updates.embedding === undefined) {
-      updates.embedding = await this.embeddingModel.embed(updates.text);
+  async updateMemory(id: string, updates: Partial<MemoryEntry>): Promise<void> {
+    await this.ensureInitialized();
+    await this.vectorStore.update(id, updates);
+  }
+
+  async deleteMemory(id: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.vectorStore.delete(id);
+  }
+
+  async getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+    await this.ensureInitialized();
+    return this.graphStore.getGraph();
+  }
+
+  async getGraphStats(): Promise<GraphStats> {
+    await this.ensureInitialized();
+    return this.graphStore.getGraphStats();
+  }
+
+  // --- MCP Server Compatible Methods ---
+
+  async createEntities(
+    entities: Array<{
+      name?: string;
+      observations?: string[];
+      entityType?: string;
+    }>,
+  ): Promise<{ id: string; name: string }[]> {
+    await this.ensureInitialized();
+    const results: { id: string; name: string }[] = [];
+
+    for (const entity of entities) {
+      const id = randomUUID();
+      const name = entity.name || `entity-${id.substring(0, 8)}`;
+
+      // Fix: Cast entityType to GraphNode["type"] to satisfy strict union type
+      const type = (entity.entityType || "entity") as GraphNode["type"];
+
+      await this.graphStore.addNode({
+        type,
+        name,
+        properties: entity.observations
+          ? { observations: entity.observations }
+          : {},
+      });
+      results.push({ id, name });
     }
 
-    if (updates.metadata) {
-      updates.metadata = {
-        ...updates.metadata,
-        timestamp: Date.now(),
-        version: (updates.metadata.version || 1) + 1,
+    return results;
+  }
+
+  async createRelations(
+    relations: Array<{
+      from?: string;
+      to?: string;
+      relationType?: string;
+    }>,
+  ): Promise<{ id: string }[]> {
+    await this.ensureInitialized();
+    const results: { id: string }[] = [];
+
+    for (const relation of relations) {
+      if (!relation.from || !relation.to) continue;
+      const id = randomUUID();
+      await (this.graphStore as any).addEdge({
+        id,
+        from: relation.from,
+        to: relation.to,
+        type: relation.relationType || "related",
+        properties: {},
+      });
+      results.push({ id });
+    }
+
+    return results;
+  }
+
+  async addObservations(
+    observations: Array<{
+      entityName?: string;
+      contents?: string[];
+    }>,
+  ): Promise<string[]> {
+    await this.ensureInitialized();
+    const ids: string[] = [];
+
+    for (const obs of observations) {
+      if (!obs.contents || obs.contents.length === 0) continue;
+      for (const content of obs.contents) {
+        const id = await this.addMemory(
+          content,
+          "mcp-server",
+          obs.entityName || "observations",
+          [],
+          "shared",
+        );
+        ids.push(id);
+      }
+    }
+
+    return ids;
+  }
+
+  async deleteEntities(entityNames: string[]): Promise<{ deleted: number }> {
+    await this.ensureInitialized();
+    let deleted = 0;
+
+    for (const name of entityNames) {
+      const graph = await this.graphStore.getGraph();
+      const node = graph.nodes.find((n) => n.name === name);
+      if (node) {
+        await (this.graphStore as any).deleteNode(name);
+        deleted++;
+      }
+    }
+
+    return { deleted };
+  }
+
+  async deleteObservations(
+    deletions: Array<{
+      observations?: string[];
+      entityName?: string;
+    }>,
+  ): Promise<{ deleted: number }> {
+    await this.ensureInitialized();
+    let deleted = 0;
+
+    for (const deletion of deletions) {
+      if (deletion.observations) {
+        for (const obsId of deletion.observations) {
+          try {
+            await this.deleteMemory(obsId);
+            deleted++;
+          } catch {
+            // Memory may not exist
+          }
+        }
+      }
+    }
+
+    return { deleted };
+  }
+
+  async deleteRelations(
+    relations: Array<{
+      from?: string;
+      to?: string;
+      relationType?: string;
+    }>,
+  ): Promise<{ deleted: number }> {
+    await this.ensureInitialized();
+    let deleted = 0;
+
+    for (const relation of relations) {
+      if (!relation.from || !relation.to) continue;
+      const graph = await this.graphStore.getGraph();
+      const edge = graph.edges.find(
+        (e) =>
+          e.from === relation.from &&
+          e.to === relation.to &&
+          (!relation.relationType || e.type === relation.relationType),
+      );
+      if (edge) {
+        await (this.graphStore as any).deleteEdge(edge.id);
+        deleted++;
+      }
+    }
+
+    return { deleted };
+  }
+
+  async searchNodes(query: string, limit: number = 10): Promise<GraphNode[]> {
+    await this.ensureInitialized();
+    const graph = await this.graphStore.getGraph();
+
+    const queryLower = query.toLowerCase();
+    const matches = graph.nodes.filter(
+      (node) =>
+        node.name.toLowerCase().includes(queryLower) ||
+        JSON.stringify(node.properties).toLowerCase().includes(queryLower),
+    );
+
+    return matches.slice(0, limit);
+  }
+
+  async openNodes(names: string[]): Promise<GraphNode[]> {
+    await this.ensureInitialized();
+    const graph = await this.graphStore.getGraph();
+
+    return graph.nodes.filter((node) => names.includes(node.name));
+  }
+
+  // --- Snapshot Methods ---
+
+  async createSnapshot(
+    name: string,
+    type: "memory" | "graph" | "full",
+    description?: string,
+  ): Promise<{ id: string; cid?: string; size: number }> {
+    await this.ensureInitialized();
+    let data: any;
+    if (type === "memory") {
+      data = await this.vectorStore.getAll();
+    } else if (type === "graph") {
+      data = await this.graphStore.getGraph();
+    } else {
+      data = {
+        memories: await this.vectorStore.getAll(),
+        graph: await this.graphStore.getGraph(),
       };
     }
 
-    return await this.vectorStore.update(id, updates);
+    return this.snapshotStore.saveSnapshot(name, data, type, description);
   }
 
-  async deleteMemory(id: string): Promise<boolean> {
-    return await this.vectorStore.delete(id);
+  async listSnapshots(
+    type?: "memory" | "graph" | "full",
+  ): Promise<SnapshotMetadata[]> {
+    await this.ensureInitialized();
+    return this.snapshotStore.listSnapshots(type);
   }
 
-  async listMemories(
-    namespace?: string,
-    limit: number = 100,
-    offset: number = 0,
-  ): Promise<MemoryEntry[]> {
-    return await this.vectorStore.list(namespace, limit, offset);
+  async loadSnapshot(id: string): Promise<any | null> {
+    await this.ensureInitialized();
+    return this.snapshotStore.loadSnapshot(id);
   }
 
-  async createSnapshot(_name: string, _description?: string): Promise<string> {
-    const snapshotId = randomUUID();
-    return snapshotId;
-  }
-
-  async loadSnapshot(_snapshotId: string): Promise<boolean> {
-    return true;
-  }
-
-  async clear(): Promise<void> {
-    await this.vectorStore.clear();
-    await this.graphStore.clear();
+  async deleteSnapshot(id: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.snapshotStore.deleteSnapshot(id);
   }
 
   async close(): Promise<void> {
-    await (this.vectorStore as any).close?.();
-    await (this.graphStore as any).close?.();
+    if (this.vectorStore && "close" in this.vectorStore) {
+      await this.vectorStore.close?.();
+    }
+    if (this.graphStore && "close" in this.graphStore) {
+      await (this.graphStore as any).close?.();
+    }
+    if (this.snapshotStore) {
+      await this.snapshotStore.close();
+    }
+    this.initialized = false;
   }
 }
 
-// Factory function
-export function createMemoryManager(config: Config): MemoryManager {
-  return new MemoryManager(config);
+export async function createMemoryManager(
+  config: Config,
+): Promise<MemoryManager> {
+  const manager = new MemoryManagerImpl(config);
+  await manager.initialize();
+  return manager;
 }

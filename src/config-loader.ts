@@ -1,29 +1,101 @@
-import { Config } from "./types.js";
-import { defaultConfig } from "./index.js";
+import type { Config } from "./types.js";
 import * as fs from "fs";
 import * as path from "path";
+
+// Minimal defaults - NO circular dependency with index.ts
+const minimalDefaults: Config = {
+  // Embedding configuration
+  embeddingModel: "local",
+  embeddingModelPath: undefined,
+  embeddingDimension: 384,
+
+  // OpenRouter specific
+  openRouterApiKey: undefined,
+  openRouterReferer: undefined,
+  openRouterTitle: undefined,
+
+  // Fallback embedding config
+  fallbackEmbeddingModel: "local",
+  fallbackEmbeddingDimension: 384,
+
+  // Vector store configuration
+  vectorStore: "memory",
+  vectorStorePath: undefined,
+  postgresConnection: undefined,
+  qdrantUrl: "http://localhost:6333",
+  qdrantCollection: "alsania-mem",
+
+  // Graph store configuration
+  graphStore: "memory",
+  graphStorePath: undefined,
+
+  // Snapshot configuration
+  snapshotStore: "filesystem",
+  snapshotPath: "./storage/snapshots",
+  snapshotConfig: undefined,
+
+  // Memory gate configuration
+  memoryGateEnabled: true,
+  memoryGateThreshold: 0.3,
+
+  // Security
+  encryptionKey: undefined,
+
+  // General configuration
+  maxMemoryEntries: 10000,
+  similarityThreshold: 0.3,
+  logLevel: "info",
+};
 
 export function loadConfig(configPath?: string): Config {
   let config: Partial<Config> = {};
 
-  // 1. Load from environment variables first
-  config = loadFromEnv();
+  // 1. Load from environment variables first (highest priority)
+  config = { ...config, ...loadFromEnv() };
 
-  // 2. Load from config file if specified
+  // 2. Load from specified config file if provided
   if (configPath && fs.existsSync(configPath)) {
     const fileConfig = loadFromFile(configPath);
     config = { ...config, ...fileConfig };
   }
 
-  // 3. Load from default config file
+  // 3. Load from default config file in project root
   const defaultConfigPath = path.join(process.cwd(), "eme-config.json");
   if (fs.existsSync(defaultConfigPath)) {
     const fileConfig = loadFromFile(defaultConfigPath);
     config = { ...config, ...fileConfig };
   }
 
-  // 4. Merge with defaults
-  return { ...defaultConfig, ...config };
+  // 4. Merge with minimal defaults (lowest priority)
+  return { ...minimalDefaults, ...config };
+}
+
+/**
+ * Recursively resolve ${VAR} environment variable references in config objects
+ */
+function resolveEnvVars(obj: any): any {
+  if (typeof obj === "string") {
+    // Handle ${VAR} syntax for environment variable expansion
+    if (obj.startsWith("${") && obj.endsWith("}")) {
+      const key = obj.slice(2, -1);
+      return process.env[key] || obj;
+    }
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(resolveEnvVars);
+  }
+
+  if (typeof obj === "object" && obj !== null) {
+    const result: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = resolveEnvVars(value);
+    }
+    return result;
+  }
+
+  return obj;
 }
 
 function loadFromEnv(): Partial<Config> {
@@ -34,8 +106,34 @@ function loadFromEnv(): Partial<Config> {
     config.embeddingModel = process.env
       .EMBEDDING_MODEL as Config["embeddingModel"];
   }
+  if (process.env.EMBEDDING_MODEL_PATH) {
+    config.embeddingModelPath = process.env.EMBEDDING_MODEL_PATH;
+  }
   if (process.env.EMBEDDING_DIMENSION) {
     config.embeddingDimension = parseInt(process.env.EMBEDDING_DIMENSION, 10);
+  }
+
+  // OpenRouter specific
+  if (process.env.OPENROUTER_API_KEY) {
+    config.openRouterApiKey = process.env.OPENROUTER_API_KEY;
+  }
+  if (process.env.OPENROUTER_REFERER) {
+    config.openRouterReferer = process.env.OPENROUTER_REFERER;
+  }
+  if (process.env.OPENROUTER_TITLE) {
+    config.openRouterTitle = process.env.OPENROUTER_TITLE;
+  }
+
+  // Fallback embedding config
+  if (process.env.FALLBACK_EMBEDDING_MODEL) {
+    config.fallbackEmbeddingModel = process.env
+      .FALLBACK_EMBEDDING_MODEL as Config["embeddingModel"];
+  }
+  if (process.env.FALLBACK_EMBEDDING_DIMENSION) {
+    config.fallbackEmbeddingDimension = parseInt(
+      process.env.FALLBACK_EMBEDDING_DIMENSION,
+      10,
+    );
   }
 
   // Vector store configuration
@@ -73,7 +171,7 @@ function loadFromEnv(): Partial<Config> {
   }
 
   // Memory gate configuration
-  if (process.env.MEMORY_GATE_ENABLED) {
+  if (process.env.MEMORY_GATE_ENABLED !== undefined) {
     config.memoryGateEnabled =
       process.env.MEMORY_GATE_ENABLED.toLowerCase() === "true";
   }
@@ -103,7 +201,9 @@ function loadFromEnv(): Partial<Config> {
 function loadFromFile(filePath: string): Partial<Config> {
   try {
     const content = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(content);
+    const parsed = JSON.parse(content);
+    // Resolve ${VAR} environment variable references
+    return resolveEnvVars(parsed);
   } catch (error) {
     console.error(`Failed to load config from ${filePath}:`, error);
     return {};
@@ -111,29 +211,76 @@ function loadFromFile(filePath: string): Partial<Config> {
 }
 
 export function createNyxConfig(config: Config): any {
+  const args: string[] = [
+    "/home/sigma/Desktop/echo-lab/memory-engine/dist/mcp-server.js",
+  ];
+
+  // Add vector store args
+  if (config.vectorStore) {
+    args.push("--vectorStore", config.vectorStore);
+  }
+  if (config.vectorStorePath) {
+    args.push("--vectorStorePath", config.vectorStorePath);
+  }
+  if (config.postgresConnection) {
+    args.push("--postgresConnection", config.postgresConnection);
+  }
+  if (config.qdrantUrl) {
+    args.push("--qdrantUrl", config.qdrantUrl);
+  }
+  if (config.qdrantCollection) {
+    args.push("--qdrantCollection", config.qdrantCollection);
+  }
+
+  // Add graph store args
+  if (config.graphStore) {
+    args.push("--graphStore", config.graphStore);
+  }
+  if (config.graphStorePath) {
+    args.push("--graphStorePath", config.graphStorePath);
+  }
+
+  // Add memory gate args
+  args.push(
+    "--memoryGateEnabled",
+    config.memoryGateEnabled.toString(),
+    "--memoryGateThreshold",
+    config.memoryGateThreshold.toString(),
+  );
+
+  // Add embedding args
+  if (config.embeddingModel) {
+    args.push("--embeddingModel", config.embeddingModel);
+  }
+  if (config.embeddingDimension) {
+    args.push("--embeddingDimension", config.embeddingDimension.toString());
+  }
+  if (config.embeddingModelPath) {
+    args.push("--embeddingModelPath", config.embeddingModelPath);
+  }
+
+  // Filter out empty args
+  const filteredArgs = args.filter((arg) => arg !== "");
+
   return {
     mcpServers: {
-      "memory-engine": {
+      eme: {
         command: "node",
-        args: [
-          "/home/sigma/Desktop/echo-lab/memory-engine/dist/mcp-server.js",
-          "--vectorStore",
-          config.vectorStore,
-          "--vectorStorePath",
-          config.vectorStorePath || "",
-          "--postgresConnection",
-          config.postgresConnection || "",
-          "--graphStore",
-          config.graphStore,
-          "--memoryGateEnabled",
-          config.memoryGateEnabled.toString(),
-          "--memoryGateThreshold",
-          config.memoryGateThreshold.toString(),
-        ].filter((arg) => arg !== ""),
+        args: filteredArgs,
         env: {
           NODE_ENV: "production",
           EME_STORAGE_PATH: "./storage",
           EME_ENCRYPTION_KEY: config.encryptionKey || "",
+          // Pass OpenRouter config via env if set
+          ...(config.openRouterApiKey && {
+            OPENROUTER_API_KEY: config.openRouterApiKey,
+          }),
+          ...(config.openRouterReferer && {
+            OPENROUTER_REFERER: config.openRouterReferer,
+          }),
+          ...(config.openRouterTitle && {
+            OPENROUTER_TITLE: config.openRouterTitle,
+          }),
         },
         description: "Alsania Echo Memory Engine - Configurable memory system",
       },

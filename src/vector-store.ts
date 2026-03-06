@@ -55,7 +55,7 @@ class LRUCache<K, V> {
 interface VectorRow {
   id: string;
   text: string;
-  embedding: Buffer; // Stored as BLOB
+  embedding: Buffer;
   agent_id: string;
   namespace: string;
   tags: string;
@@ -83,7 +83,9 @@ export interface IVectorStore {
     limit?: number,
     offset?: number,
   ): Promise<MemoryEntry[]>;
+  getAll(): Promise<MemoryEntry[]>;
   clear(): Promise<void>;
+  close?(): Promise<void>;
 }
 
 /**
@@ -95,18 +97,14 @@ export class SQLiteVectorStore implements IVectorStore {
   private embeddingCache: LRUCache<string, number[]>;
 
   constructor(private config: Config) {
-    // Initialize cache with configurable size (default 1000)
     const cacheSize = (config as any).cacheSize || 1000;
     this.embeddingCache = new LRUCache<string, number[]>(cacheSize);
   }
 
   async initialize(): Promise<void> {
-    // Clear cache on initialization
     this.embeddingCache.clear();
-    // Use configurable path, fallback to :memory: for backward compatibility
     const dbPath = this.config.vectorStorePath || ":memory:";
 
-    // Dynamically import better-sqlite3 only when needed
     const Database = (await import("better-sqlite3")).default;
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
@@ -129,7 +127,6 @@ export class SQLiteVectorStore implements IVectorStore {
       )
     `);
 
-    // Create indexes for faster searches
     this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_namespace ON ${this.tableName}(namespace)`,
     );
@@ -145,13 +142,11 @@ export class SQLiteVectorStore implements IVectorStore {
     row: { embedding: Buffer },
     id: string,
   ): number[] {
-    // Check cache first
     const cached = this.embeddingCache.get(id);
     if (cached) {
       return cached;
     }
 
-    // Extract from buffer and cache
     const embeddingArray = Array.from(new Float32Array(row.embedding.buffer));
     this.embeddingCache.set(id, embeddingArray);
     return embeddingArray;
@@ -212,10 +207,36 @@ export class SQLiteVectorStore implements IVectorStore {
       now,
     );
 
-    // Cache the embedding
     this.embeddingCache.set(id, entry.embedding);
 
     return id;
+  }
+
+  async getAll(): Promise<MemoryEntry[]> {
+    if (!this.db) throw new Error("Database not initialized");
+
+    const rows = this.db
+      .prepare(`SELECT * FROM ${this.tableName}`)
+      .all() as VectorRow[];
+
+    return rows.map((row) => {
+      const embeddingArray = this.getEmbeddingFromRow(row, row.id);
+      return {
+        id: row.id,
+        text: row.text,
+        embedding: embeddingArray,
+        metadata: {
+          agentId: row.agent_id,
+          namespace: row.namespace,
+          tags: JSON.parse(row.tags || "[]"),
+          visibility: row.visibility as "private" | "shared" | "system",
+          timestamp: row.timestamp,
+          version: row.version,
+        },
+        createdAt: new Date(row.created_at),
+        updatedAt: new Date(row.updated_at),
+      };
+    });
   }
 
   async search(
@@ -225,25 +246,28 @@ export class SQLiteVectorStore implements IVectorStore {
   ): Promise<Array<{ entry: MemoryEntry; score: number }>> {
     if (!this.db) throw new Error("Database not initialized");
 
-    // First, get candidate rows with limit to avoid full table scan
     const candidateQuery = namespace
       ? `SELECT id, embedding FROM ${this.tableName} WHERE namespace = ? LIMIT ?`
       : `SELECT id, embedding FROM ${this.tableName} LIMIT ?`;
 
     const candidateParams = namespace ? [namespace, limit * 10] : [limit * 10];
-    
-    const candidateRows = namespace
-      ? this.db.prepare(candidateQuery).all(...candidateParams) as { id: string; embedding: Buffer }[]
-      : this.db.prepare(candidateQuery).all(candidateParams[0]) as { id: string; embedding: Buffer }[];
 
-    // Calculate similarity for candidates
+    const candidateRows = namespace
+      ? (this.db.prepare(candidateQuery).all(...candidateParams) as {
+          id: string;
+          embedding: Buffer;
+        }[])
+      : (this.db.prepare(candidateQuery).all(candidateParams[0]) as {
+          id: string;
+          embedding: Buffer;
+        }[]);
+
     const scoredCandidates = candidateRows.map((row) => {
       const embeddingArray = this.getEmbeddingFromRow(row, row.id);
       const score = this.cosineSimilarity(queryEmbedding, embeddingArray);
       return { id: row.id, score };
     });
 
-    // Sort by score descending and take top N
     const topIds = scoredCandidates
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
@@ -253,7 +277,6 @@ export class SQLiteVectorStore implements IVectorStore {
       return [];
     }
 
-    // Fetch full data for top results
     const placeholders = topIds.map(() => "?").join(",");
     const finalQuery = `SELECT * FROM ${this.tableName} WHERE id IN (${placeholders})`;
     const finalRows = this.db.prepare(finalQuery).all(...topIds) as VectorRow[];
@@ -281,7 +304,6 @@ export class SQLiteVectorStore implements IVectorStore {
       return { entry, score };
     });
 
-    // Sort by similarity score (descending) and return top results
     return results
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
@@ -333,7 +355,6 @@ export class SQLiteVectorStore implements IVectorStore {
     if (updates.embedding !== undefined) {
       setClauses.push("embedding = ?");
       values.push(Buffer.from(new Float32Array(updates.embedding).buffer));
-      // Update cache
       this.embeddingCache.set(id, updates.embedding);
     }
 
@@ -383,14 +404,11 @@ export class SQLiteVectorStore implements IVectorStore {
   async delete(id: string): Promise<boolean> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const stmt = this.db.prepare(
-      `DELETE FROM ${this.tableName} WHERE id = ?`,
-    );
+    const stmt = this.db.prepare(`DELETE FROM ${this.tableName} WHERE id = ?`);
     const result = stmt.run(id);
-    
-    // Remove from cache
+
     this.embeddingCache.delete(id);
-    
+
     return result.changes > 0;
   }
 
@@ -406,9 +424,11 @@ export class SQLiteVectorStore implements IVectorStore {
       : `SELECT * FROM ${this.tableName} ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
 
     const params = namespace ? [namespace, limit, offset] : [limit, offset];
-    const rows = (namespace
-      ? this.db.prepare(query).all(...params)
-      : this.db.prepare(query).all(params[0])) as VectorRow[];
+    const rows = (
+      namespace
+        ? this.db.prepare(query).all(...params)
+        : this.db.prepare(query).all(params[0])
+    ) as VectorRow[];
 
     return rows.map((row) => {
       const embeddingArray = this.getEmbeddingFromRow(row, row.id);
@@ -433,7 +453,6 @@ export class SQLiteVectorStore implements IVectorStore {
   async clear(): Promise<void> {
     if (!this.db) throw new Error("Database not initialized");
     this.db.prepare(`DELETE FROM ${this.tableName}`).run();
-    // Clear cache
     this.embeddingCache.clear();
   }
 
@@ -446,7 +465,6 @@ export class SQLiteVectorStore implements IVectorStore {
 
 /**
  * QdrantVectorStore - Vector store implementation using Qdrant
- * Supports both local and remote Qdrant instances
  */
 export class QdrantVectorStore implements IVectorStore {
   private client: QdrantClient;
@@ -458,22 +476,19 @@ export class QdrantVectorStore implements IVectorStore {
     this.collectionName = config.qdrantCollection || "alsania-mem";
     this.embeddingDimension = config.embeddingDimension || 1536;
     this.similarityThreshold = config.similarityThreshold || 0.3;
-    
-    // Initialize Qdrant client with URL from config
+
     const qdrantUrl = config.qdrantUrl || "http://localhost:6333";
     this.client = new QdrantClient({ url: qdrantUrl });
   }
 
   async initialize(): Promise<void> {
     try {
-      // Check if collection exists
       const collections = await this.client.getCollections();
       const exists = collections.collections.some(
-        (c: any) => c.name === this.collectionName
+        (c: any) => c.name === this.collectionName,
       );
 
       if (!exists) {
-        // Create collection with vector configuration
         await this.client.createCollection(this.collectionName, {
           vectors: {
             size: this.embeddingDimension,
@@ -525,13 +540,46 @@ export class QdrantVectorStore implements IVectorStore {
     }
   }
 
+  async getAll(): Promise<MemoryEntry[]> {
+    try {
+      const results = await this.client.scroll(this.collectionName, {
+        limit: 1000,
+        with_payload: true,
+        with_vector: false,
+      });
+
+      return results.points.map((point: any) => {
+        const payload = point.payload || {};
+        return {
+          id: point.id as string,
+          text: payload.text as string,
+          embedding: [],
+          metadata: {
+            agentId: payload.agentId as string,
+            namespace: payload.namespace as string,
+            tags: (payload.tags as string[]) || [],
+            visibility:
+              (payload.visibility as "private" | "shared" | "system") ||
+              "private",
+            timestamp: (payload.timestamp as number) || Date.now(),
+            version: (payload.version as number) || 1,
+          },
+          createdAt: new Date(payload.createdAt as string),
+          updatedAt: new Date(payload.updatedAt as string),
+        };
+      });
+    } catch (error) {
+      console.error(`[Qdrant] GetAll error:`, error);
+      return [];
+    }
+  }
+
   async search(
     queryEmbedding: number[],
     limit: number = 5,
     namespace?: string,
   ): Promise<Array<{ entry: MemoryEntry; score: number }>> {
     try {
-      // Build filter if namespace is provided
       const filter = namespace
         ? {
             must: [
@@ -545,12 +593,11 @@ export class QdrantVectorStore implements IVectorStore {
 
       const results = await this.client.search(this.collectionName, {
         vector: queryEmbedding,
-        limit: limit * 2, // Get more to filter by threshold
+        limit: limit * 2,
         filter,
         with_payload: true,
       });
 
-      // Map results to MemoryEntry format
       const memories = results
         .filter((r: any) => r.score >= this.similarityThreshold)
         .slice(0, limit)
@@ -559,12 +606,14 @@ export class QdrantVectorStore implements IVectorStore {
           const entry: MemoryEntry = {
             id: r.id as string,
             text: payload.text as string,
-            embedding: queryEmbedding, // Don't return the full embedding from Qdrant
+            embedding: queryEmbedding,
             metadata: {
               agentId: payload.agentId as string,
               namespace: payload.namespace as string,
               tags: (payload.tags as string[]) || [],
-              visibility: (payload.visibility as "private" | "shared" | "system") || "private",
+              visibility:
+                (payload.visibility as "private" | "shared" | "system") ||
+                "private",
               timestamp: (payload.timestamp as number) || Date.now(),
               version: (payload.version as number) || 1,
             },
@@ -604,7 +653,9 @@ export class QdrantVectorStore implements IVectorStore {
           agentId: payload.agentId as string,
           namespace: payload.namespace as string,
           tags: (payload.tags as string[]) || [],
-          visibility: (payload.visibility as "private" | "shared" | "system") || "private",
+          visibility:
+            (payload.visibility as "private" | "shared" | "system") ||
+            "private",
           timestamp: (payload.timestamp as number) || Date.now(),
           version: (payload.version as number) || 1,
         },
@@ -619,18 +670,17 @@ export class QdrantVectorStore implements IVectorStore {
 
   async update(id: string, updates: Partial<MemoryEntry>): Promise<boolean> {
     try {
-      // Get existing entry first
       const existing = await this.get(id);
       if (!existing) {
         return false;
       }
 
-      // Merge updates
       const updatedPayload: Record<string, any> = {
         ...existing.metadata,
         text: updates.text ?? existing.text,
         tags: updates.metadata?.tags ?? existing.metadata.tags,
-        visibility: updates.metadata?.visibility ?? existing.metadata.visibility,
+        visibility:
+          updates.metadata?.visibility ?? existing.metadata.visibility,
         namespace: updates.metadata?.namespace ?? existing.metadata.namespace,
         agentId: updates.metadata?.agentId ?? existing.metadata.agentId,
         timestamp: updates.metadata?.timestamp ?? existing.metadata.timestamp,
@@ -638,7 +688,6 @@ export class QdrantVectorStore implements IVectorStore {
         updatedAt: new Date().toISOString(),
       };
 
-      // Update vector if provided
       const vector = updates.embedding ?? existing.embedding;
 
       await this.client.upsert(this.collectionName, {
@@ -678,7 +727,6 @@ export class QdrantVectorStore implements IVectorStore {
     offset: number = 0,
   ): Promise<MemoryEntry[]> {
     try {
-      // Build filter if namespace is provided
       const filter = namespace
         ? {
             must: [
@@ -690,7 +738,6 @@ export class QdrantVectorStore implements IVectorStore {
           }
         : undefined;
 
-      // Use scroll API for listing
       const results = await this.client.scroll(this.collectionName, {
         limit,
         offset,
@@ -704,12 +751,14 @@ export class QdrantVectorStore implements IVectorStore {
         return {
           id: point.id as string,
           text: payload.text as string,
-          embedding: [], // Don't return embeddings for list
+          embedding: [],
           metadata: {
             agentId: payload.agentId as string,
             namespace: payload.namespace as string,
             tags: (payload.tags as string[]) || [],
-            visibility: (payload.visibility as "private" | "shared" | "system") || "private",
+            visibility:
+              (payload.visibility as "private" | "shared" | "system") ||
+              "private",
             timestamp: (payload.timestamp as number) || Date.now(),
             version: (payload.version as number) || 1,
           },
@@ -725,11 +774,10 @@ export class QdrantVectorStore implements IVectorStore {
 
   async clear(): Promise<void> {
     try {
-      // Delete all points in collection
       await this.client.delete(this.collectionName, {
         wait: true,
         filter: {
-          must: [], // Empty filter matches all
+          must: [],
         },
       });
       console.log(`[Qdrant] Cleared collection: ${this.collectionName}`);
@@ -757,20 +805,20 @@ export class InMemoryVectorStore implements IVectorStore {
 
   private cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) return 0;
-    
+
     let dotProduct = 0;
     let normA = 0;
     let normB = 0;
-    
+
     for (let i = 0; i < a.length; i++) {
       dotProduct += a[i] * b[i];
       normA += a[i] * a[i];
       normB += b[i] * b[i];
     }
-    
+
     normA = Math.sqrt(normA);
     normB = Math.sqrt(normB);
-    
+
     if (normA === 0 || normB === 0) return 0;
     return dotProduct / (normA * normB);
   }
@@ -780,7 +828,7 @@ export class InMemoryVectorStore implements IVectorStore {
   ): Promise<string> {
     const id = randomUUID();
     const now = new Date();
-    
+
     const memory: MemoryEntry = {
       id,
       text: entry.text,
@@ -789,9 +837,13 @@ export class InMemoryVectorStore implements IVectorStore {
       createdAt: now,
       updatedAt: now,
     };
-    
+
     this.memories.set(id, memory);
     return id;
+  }
+
+  async getAll(): Promise<MemoryEntry[]> {
+    return Array.from(this.memories.values());
   }
 
   async search(
@@ -800,23 +852,19 @@ export class InMemoryVectorStore implements IVectorStore {
     namespace?: string,
   ): Promise<Array<{ entry: MemoryEntry; score: number }>> {
     const results: Array<{ entry: MemoryEntry; score: number }> = [];
-    
+
     for (const memory of this.memories.values()) {
-      // Filter by namespace if provided
       if (namespace && memory.metadata.namespace !== namespace) {
         continue;
       }
-      
+
       const score = this.cosineSimilarity(queryEmbedding, memory.embedding);
       if (score >= this.similarityThreshold) {
         results.push({ entry: memory, score });
       }
     }
-    
-    // Sort by score descending and return top results
-    return results
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+
+    return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   async get(id: string): Promise<MemoryEntry | null> {
@@ -826,7 +874,7 @@ export class InMemoryVectorStore implements IVectorStore {
   async update(id: string, updates: Partial<MemoryEntry>): Promise<boolean> {
     const existing = this.memories.get(id);
     if (!existing) return false;
-    
+
     const updated: MemoryEntry = {
       ...existing,
       text: updates.text ?? existing.text,
@@ -837,7 +885,7 @@ export class InMemoryVectorStore implements IVectorStore {
       },
       updatedAt: new Date(),
     };
-    
+
     this.memories.set(id, updated);
     return true;
   }
@@ -852,14 +900,13 @@ export class InMemoryVectorStore implements IVectorStore {
     offset: number = 0,
   ): Promise<MemoryEntry[]> {
     let results = Array.from(this.memories.values());
-    
+
     if (namespace) {
-      results = results.filter(m => m.metadata.namespace === namespace);
+      results = results.filter((m) => m.metadata.namespace === namespace);
     }
-    
-    // Sort by timestamp descending
+
     results.sort((a, b) => b.metadata.timestamp - a.metadata.timestamp);
-    
+
     return results.slice(offset, offset + limit);
   }
 
@@ -868,10 +915,10 @@ export class InMemoryVectorStore implements IVectorStore {
   }
 }
 
-// Factory function - creates the appropriate vector store based on config
+// Factory function
 export async function createVectorStore(config: Config): Promise<IVectorStore> {
   console.log(`[EME] Using vector store: ${config.vectorStore}`);
-  
+
   switch (config.vectorStore) {
     case "sqlite": {
       const store = new SQLiteVectorStore(config);
@@ -888,24 +935,15 @@ export async function createVectorStore(config: Config): Promise<IVectorStore> {
       await store.initialize();
       return store;
     }
-    case "postgres": {
-      console.warn("[EME] PostgreSQL vector store not yet implemented, falling back to SQLite");
+    case "postgres":
+    case "lancedb":
+    case "faiss":
+      console.warn(
+        `[EME] ${config.vectorStore} vector store not yet implemented, falling back to SQLite`,
+      );
       const store = new SQLiteVectorStore(config);
       await store.initialize();
       return store;
-    }
-    case "lancedb": {
-      console.warn("[EME] LanceDB vector store not yet implemented, falling back to SQLite");
-      const store = new SQLiteVectorStore(config);
-      await store.initialize();
-      return store;
-    }
-    case "faiss": {
-      console.warn("[EME] FAISS vector store not yet implemented, falling back to SQLite");
-      const store = new SQLiteVectorStore(config);
-      await store.initialize();
-      return store;
-    }
     default:
       throw new Error(`Unsupported vector store type: ${config.vectorStore}`);
   }

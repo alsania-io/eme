@@ -25,6 +25,9 @@ storage/
 .env
 .env.*
 
+# Deprecated files/folders (archived but kept for reference)
+.deprecated/
+
 # Deployment and development scripts
 *.sh
 Containerfile
@@ -56,7 +59,7 @@ __pycache__/
 .gitignore
 
 # Configuration examples (except package.json)
-config-*.json
+storage/config-*.json
 mcp-config.json
 
 # Source maps (optional - include if you want debugging)

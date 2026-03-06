@@ -1,6 +1,7 @@
-
-
+# .env
 #Ignore vscode AI rules
+.vscode
+.deprecated
 .github/instructions/codacy.instructions.md
 node_modules/
 dist/
@@ -8,12 +9,6 @@ dist/
 *.log
 *.pid
 *.seed
-*.swp
-*.swo
-*.swn
-*.swm
-*.swx
-*.swz
 *.swp
 *.swo
 *.swn
@@ -36,6 +31,7 @@ dist/
 
 # Ignore log files
 *.log
+.logs/
 
 # Ignore PID files
 *.pid
@@ -64,59 +60,42 @@ __pycache__/
 *.jar
 *.war
 *.ear
-*.jar
-*.war
-*.ear
 
 # Ignore JavaScript files
-*.js.map
 *.js.map
 
 # Ignore TypeScript files
 *.ts.map
-*.ts.map
 
 # Ignore CSS files
-*.css.map
 *.css.map
 
 # Ignore SCSS files
 *.scss.map
-*.scss.map
 
 # Ignore LESS files
-*.less.map
 *.less.map
 
 # Ignore SASS files
 *.sass.map
-*.sass.map
 
 # Ignore Stylus files
-*.styl.map
 *.styl.map
 
 # Ignore CoffeeScript files
 *.coffee.map
-*.coffee.map
 
 # Ignore Dart files
-*.dart.map
 *.dart.map
 
 # Ignore Go files
 *.go.map
-*.go.map
 
 # Ignore Rust files
-*.rs.map
 *.rs.map
 
 # Ignore Swift files
 *.swift.map
-*.swift.map
 
 # Ignore Kotlin files
 *.kt.map
-*.kt.map
-

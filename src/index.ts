@@ -1,3 +1,4 @@
+import "dotenv/config";
 import type { Config, MemoryGateFilter, SearchResult } from "./types.js";
 import { createMemoryManager } from "./memory-manager.js";
 import { EMEMCPServer } from "./mcp-server.js";
@@ -22,15 +23,15 @@ export { loadConfig } from "./config-loader.js";
 export const defaultConfig: Config = {
   // Embedding configuration
   embeddingModel: "local",
-  embeddingDimension: 384, // BGE-small dimension
+  embeddingDimension: 384,
 
-  // Vector store configuration
-  vectorStore: "sqlite",
-  vectorStorePath: "./storage/vectors.db",
+  // Vector store configuration - QDRANT
+  vectorStore: "qdrant",
+  qdrantUrl: "http://localhost:6333",
+  qdrantCollection: "alsania-mem",
 
   // Graph store configuration
-  graphStore: "jsonl",
-  graphStorePath: "./storage/graph.jsonl",
+  graphStore: "memory",
 
   // Snapshot configuration
   snapshotStore: "filesystem",
@@ -48,21 +49,43 @@ export const defaultConfig: Config = {
 
 // Utility function to create and start MCP server
 export async function startMCPServer(config?: Partial<Config>): Promise<void> {
-  const server = new EMEMCPServer(config);
-  await server.start();
+  const fullConfig = { ...defaultConfig, ...config };
+  console.error(
+    `[EME] Initializing with vector store: ${fullConfig.vectorStore}`,
+  );
+
+  try {
+    // Create and initialize the server
+    const server = new EMEMCPServer(fullConfig);
+    await server.initialize();
+    await server.run();
+  } catch (error) {
+    console.error("[EME] Failed to start MCP server:", error);
+    process.exit(1);
+  }
 }
 
 // For backward compatibility with existing Python code
 export class MemoryEngine {
-  private manager: ReturnType<typeof createMemoryManager>;
+  private manager: Awaited<ReturnType<typeof createMemoryManager>>;
+  private initialized: boolean = false;
+  private _config: Config;
 
   constructor(config?: Partial<Config>) {
-    const fullConfig = { ...defaultConfig, ...config };
-    this.manager = createMemoryManager(fullConfig);
+    this._config = { ...defaultConfig, ...config };
+    this.manager = null as any;
   }
 
   async initialize(): Promise<void> {
-    await this.manager.initialize();
+    if (this.initialized) return;
+    this.manager = await createMemoryManager(this._config);
+    this.initialized = true;
+  }
+
+  async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
   }
 
   async addMemory(
@@ -71,15 +94,14 @@ export class MemoryEngine {
     namespace: string = "default",
     tags: string[] = [],
     visibility: "private" | "shared" | "system" = "private",
-    forceSave: boolean = false,
-  ): Promise<{ id: string | null; filter: MemoryGateFilter }> {
+  ): Promise<string> {
+    await this.ensureInitialized();
     return await this.manager.addMemory(
       text,
       agentId,
       namespace,
       tags,
       visibility,
-      forceSave,
     );
   }
 
@@ -87,13 +109,16 @@ export class MemoryEngine {
     query: string,
     limit: number = 5,
     namespace?: string,
-    includeGraph: boolean = true,
   ): Promise<SearchResult[]> {
-    return await this.manager.search(query, limit, namespace, includeGraph);
+    await this.ensureInitialized();
+    return await this.manager.searchMemories(query, limit, namespace);
   }
 
   async close(): Promise<void> {
-    await this.manager.close();
+    if (this.initialized && this.manager) {
+      // Add cleanup logic if needed
+      this.initialized = false;
+    }
   }
 }
 
@@ -103,119 +128,84 @@ if (require.main === module) {
   const args = process.argv.slice(3);
 
   // Parse CLI arguments including --config flag
-  const parseCliArgs = (args: string[]): { configPath?: string; configOverrides: Partial<Config> } => {
+  const parseCliArgs = (
+    args: string[],
+  ): { configPath?: string; configOverrides: Partial<Config> } => {
     let configPath: string | undefined;
     const configOverrides: Partial<Config> = {};
-    
+
     for (let i = 0; i < args.length; i++) {
       if (args[i] === "--config" && i + 1 < args.length) {
         configPath = args[i + 1];
-        i++; // Skip the next argument (config path value)
+        i++;
       } else if (args[i].startsWith("--") && i + 1 < args.length) {
         const key = args[i].slice(2);
         const value = args[i + 1];
-        i++; // Skip the next argument
+        i++;
 
-        if (key === "embeddingDimension" || key === "maxMemoryEntries") {
-          (configOverrides as any)[key] = parseInt(value, 10);
-        } else if (
-          key === "similarityThreshold" ||
-          key === "memoryGateThreshold"
+        if (
+          key === "embeddingDimension" ||
+          key === "maxMemoryEntries" ||
+          key === "similarityThreshold"
         ) {
-          (configOverrides as any)[key] = parseFloat(value);
-        } else if (key === "memoryGateEnabled") {
-          (configOverrides as any)[key] = value.toLowerCase() === "true";
-        } else {
+          (configOverrides as any)[key] = parseInt(value, 10);
+        } else if (key === "memoryGateThreshold") {
+          configOverrides.memoryGateThreshold = parseFloat(value);
+        } else if (
+          key === "vectorStore" ||
+          key === "graphStore" ||
+          key === "snapshotStore"
+        ) {
           (configOverrides as any)[key] = value;
+        } else if (key === "embeddingModel") {
+          (configOverrides as any)[key] = value as any;
+        } else if (key === "logLevel") {
+          (configOverrides as any)[key] = value as any;
         }
       }
     }
+
     return { configPath, configOverrides };
   };
 
-  switch (command) {
-    case "start":
-    case "server":
-      (async () => {
-        const { configPath, configOverrides } = parseCliArgs(args);
-        // Load config from file if specified, then apply CLI overrides
-        const loadedConfig = configPath ? loadConfig(configPath) : defaultConfig;
-        const finalConfig = { ...loadedConfig, ...configOverrides };
-        console.error(`[EME] Using vector store: ${finalConfig.vectorStore}`);
-        await startMCPServer(finalConfig);
-      })().catch(console.error);
-      break;
+  const { configPath, configOverrides } = parseCliArgs(args);
+  const config = { ...defaultConfig, ...configOverrides };
 
-    case "test":
-      // Run basic tests
-      (async () => {
-        const engine = new MemoryEngine();
-        await engine.initialize();
+  // Support multiple command aliases
+  const serverCommands = ["start-server", "server", "start", "run", "s"];
 
-        console.log("🧪 Running EME basic tests...");
+  if (!command) {
+    console.log("EME - Echo Memory Engine");
+    console.log("");
+    console.log("Usage:");
+    console.log("  node dist/index.js server     Start MCP server");
+    console.log("  node dist/index.js help       Show this help");
+    console.log("");
+    console.log("Options:");
+    console.log("  --vectorStore <type>    sqlite|memory|qdrant");
+    console.log("  --graphStore <type>     memory|sqlite");
+    console.log("  --logLevel <level>      debug|info|warn|error");
+    console.log("  --config <path>         Load config from file");
+    process.exit(0);
+  }
 
-        const result = await engine.addMemory(
-          "Test memory from CLI",
-          "cli-test",
-        );
-        console.log("✅ Added memory:", result);
-
-        const searchResults = await engine.search("test memory");
-        console.log("✅ Search results:", searchResults.length, "matches");
-
-        await engine.close();
-        console.log("🎯 Test completed successfully");
-      })().catch(console.error);
-      break;
-
-    case "config":
-      console.log("📋 Current default configuration:");
-      console.log(JSON.stringify(defaultConfig, null, 2));
-      break;
-
-    case "version":
-      console.log("Alsania Echo Memory Engine (EME) - v1.0.0");
-      console.log("Professional memory system for MCP ecosystem");
-      break;
-
-    case "help":
-    default:
-      console.log(`
-╔══════════════════════════════════════════════════════════╗
-║   Alsania Echo Memory Engine (EME) - Professional CLI    ║
-╚══════════════════════════════════════════════════════════╝
-
-📦 Commands:
-  server    - Start MCP server (alias: start)
-    Usage: node dist/index.js server [--key value]
-    Example: node dist/index.js server --maxMemoryEntries 5000
-
-  test      - Run basic functionality tests
-    Usage: node dist/index.js test
-
-  config    - Show default configuration
-    Usage: node dist/index.js config
-
-  version   - Show version information
-    Usage: node dist/index.js version
-
-  help      - Show this help message
-    Usage: node dist/index.js help
-
-🔧 Configuration options (for server command):
-  --embeddingDimension    Vector dimension (default: 384)
-  --maxMemoryEntries      Max entries per namespace (default: 10000)
-  --similarityThreshold   Search threshold (default: 0.3)
-  --memoryGateThreshold   Filter threshold (default: 0.7)
-  --memoryGateEnabled     Enable memory filtering (default: true)
-  --logLevel              Log level (default: "info")
-
-🎯 Examples:
-  node dist/index.js server
-  node dist/index.js server --maxMemoryEntries 5000 --logLevel debug
-  node dist/index.js test
-  node dist/index.js config
-      `);
-      break;
+  if (serverCommands.includes(command)) {
+    startMCPServer(config).catch(console.error);
+  } else if (command === "help" || command === "--help" || command === "-h") {
+    console.log("EME - Echo Memory Engine");
+    console.log("");
+    console.log("Usage:");
+    console.log("  node dist/index.js server     Start MCP server");
+    console.log("  node dist/index.js help       Show this help");
+    console.log("");
+    console.log("Options:");
+    console.log("  --vectorStore <type>    sqlite|memory|qdrant");
+    console.log("  --graphStore <type>     memory|sqlite");
+    console.log("  --logLevel <level>      debug|info|warn|error");
+    console.log("  --config <path>         Load config from file");
+  } else {
+    console.error("Unknown command:", command);
+    console.error("Run 'node dist/index.js help' for usage information");
+    process.exit(1);
   }
 }

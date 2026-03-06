@@ -5,132 +5,194 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { createMemoryManager } from "./memory-manager.js";
-import { Config } from "./types.js";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { createMemoryManager, MemoryManager } from "./memory-manager.js";
+import type { Config, SearchResult } from "./types.js";
+import { randomUUID } from "crypto";
 
-// MCP Tool schemas
+// Schema definitions with proper validation
 const AddMemorySchema = z.object({
-  text: z.string(),
-  agentId: z.string().optional().default("unknown"),
-  namespace: z.string().optional().default("default"),
-  tags: z.array(z.string()).optional().default([]),
-  visibility: z
-    .enum(["private", "shared", "system"] as const)
+  text: z.string().min(1).describe("The memory text to store"),
+  agentId: z
+    .string()
     .optional()
-    .default("private"),
-  forceSave: z.boolean().optional().default(false),
+    .default("unknown")
+    .describe("ID of the agent creating the memory"),
+  namespace: z
+    .string()
+    .optional()
+    .default("default")
+    .describe("Namespace for the memory"),
+  tags: z
+    .array(z.string())
+    .optional()
+    .default([])
+    .describe("Tags to categorize the memory"),
+  visibility: z
+    .enum(["private", "shared", "system"])
+    .optional()
+    .default("private")
+    .describe("Visibility level of the memory"),
 });
 
 const SearchMemorySchema = z.object({
-  query: z.string(),
-  limit: z.number().optional().default(5),
-  namespace: z.string().optional(),
-  includeGraph: z.boolean().optional().default(true),
+  query: z.string().min(1).describe("Search query text"),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .default(5)
+    .describe("Maximum number of results"),
+  namespace: z.string().optional().describe("Filter by namespace"),
+  includeGraph: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe("Include graph context in results"),
+});
+
+const GetMemorySchema = z.object({
+  id: z.string().uuid().describe("ID of the memory to retrieve"),
 });
 
 const UpdateMemorySchema = z.object({
-  id: z.string(),
-  text: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  visibility: z.enum(["private", "shared", "system"] as const).optional(),
+  id: z.string().uuid().describe("ID of the memory to update"),
+  text: z.string().optional().describe("Updated memory text"),
+  tags: z.array(z.string()).optional().describe("Updated tags"),
 });
 
 const DeleteMemorySchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().describe("ID of the memory to delete"),
 });
 
-const ListMemoriesSchema = z.object({
-  namespace: z.string().optional(),
-  limit: z.number().optional().default(100),
-  offset: z.number().optional().default(0),
+const GetGraphSchema = z
+  .object({})
+  .describe("Get the complete knowledge graph");
+const GetGraphStatsSchema = z
+  .object({})
+  .describe("Get statistics about the knowledge graph");
+
+const CreateSnapshotSchema = z.object({
+  name: z.string().min(1).describe("Name for the snapshot"),
+  type: z
+    .enum(["memory", "graph", "full"])
+    .optional()
+    .default("full")
+    .describe("Type of snapshot"),
+  description: z.string().optional().describe("Optional description"),
 });
 
-const GraphAddNodeSchema = z.object({
-  type: z.enum(["concept", "event", "person", "tool", "task", "entity", "project", "state"] as const),
-  name: z.string(),
-  properties: z.record(z.string(), z.any()).optional().default({}),
+const ListSnapshotsSchema = z.object({
+  type: z
+    .enum(["memory", "graph", "full"])
+    .optional()
+    .describe("Filter by snapshot type"),
 });
 
-const GraphAddEdgeSchema = z.object({
-  from: z.string(),
-  to: z.string(),
-  type: z.enum(["related_to", "is", "part_of", "changed_from", "updated_on", "owned_by", "assigned_to"] as const),
-  weight: z.number().optional().default(1.0),
-  properties: z.record(z.string(), z.any()).optional().default({}),
-});
-
-const SnapshotSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-});
-
-const GraphReadSchema = z.object({
-  includeStats: z.boolean().optional().default(true),
-});
-
-const BatchAddMemoriesSchema = z.object({
-  memories: z.array(
-    z.object({
-      text: z.string(),
-      agentId: z.string().optional().default("unknown"),
-      namespace: z.string().optional().default("default"),
-      tags: z.array(z.string()).optional().default([]),
-      visibility: z
-        .enum(["private", "shared", "system"] as const)
-        .optional()
-        .default("private"),
-      forceSave: z.boolean().optional().default(false),
-    }),
-  ),
-});
-
-const ClearNamespaceSchema = z.object({
-  namespace: z.string(),
-  confirm: z.boolean().optional().default(false),
-});
 const LoadSnapshotSchema = z.object({
-  snapshotId: z.string(),
+  id: z.string().uuid().describe("ID of the snapshot to load"),
 });
+
+const DeleteSnapshotSchema = z.object({
+  id: z.string().uuid().describe("ID of the snapshot to delete"),
+});
+
+const GetConfigSchema = z.object({}).describe("Get current configuration");
+
+const UpdateConfigSchema = z.object({
+  key: z.string().describe("Configuration key to update"),
+  value: z.any().describe("New value"),
+});
+
+// Memory-Cache Compatible Schemas
+const CreateEntitiesSchema = z.object({
+  entities: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        entityType: z.string(),
+        observations: z.array(z.string()).optional().default([]),
+      }),
+    )
+    .describe("Array of entities to create"),
+});
+
+const CreateRelationsSchema = z.object({
+  relations: z
+    .array(
+      z.object({
+        from: z.string().min(1),
+        to: z.string().min(1),
+        relationType: z.string().min(1),
+      }),
+    )
+    .describe("Array of relations to create"),
+});
+
+const AddObservationsSchema = z.object({
+  observations: z
+    .array(
+      z.object({
+        entityName: z.string().min(1),
+        contents: z.array(z.string()),
+      }),
+    )
+    .describe("Array of observations to add"),
+});
+
+const DeleteEntitiesSchema = z.object({
+  entityNames: z.array(z.string()).describe("Array of entity names to delete"),
+});
+
+const DeleteObservationsSchema = z.object({
+  deletions: z
+    .array(
+      z.object({
+        entityName: z.string().min(1),
+        observations: z.array(z.string()),
+      }),
+    )
+    .describe("Array of observations to delete"),
+});
+
+const DeleteRelationsSchema = z.object({
+  relations: z
+    .array(
+      z.object({
+        from: z.string().min(1),
+        to: z.string().min(1),
+        relationType: z.string().min(1),
+      }),
+    )
+    .describe("Array of relations to delete"),
+});
+
+const OpenNodesSchema = z.object({
+  names: z.array(z.string()).describe("Array of entity names to retrieve"),
+});
+
+// Options for zodToJsonSchema to include descriptions and proper formatting
+const schemaOptions = {
+  $refStrategy: "none" as const,
+  target: "jsonSchema7" as const,
+  definitions: {},
+  errorMessages: false,
+};
 
 export class EMEMCPServer {
   private server: Server;
-  private memoryManager: ReturnType<typeof createMemoryManager>;
+  private memoryManager: MemoryManager | null = null;
   private config: Config;
+  private tools: Map<string, any> = new Map();
 
-  constructor(config?: Partial<Config>) {
-    this.config = {
-      // Embedding configuration
-      embeddingModel: "local",
-      embeddingDimension: 384,
-
-      // Vector store configuration
-      vectorStore: "sqlite",
-      vectorStorePath: "./storage/vectors.db",
-
-      // Graph store configuration
-      graphStore: "jsonl",
-      graphStorePath: "./storage/graph.jsonl",
-
-      // Snapshot configuration
-      snapshotStore: "filesystem",
-      snapshotPath: "./storage/snapshots",
-
-      // Memory gate configuration
-      memoryGateEnabled: true,
-      memoryGateThreshold: 0.3,
-
-      // General configuration
-      maxMemoryEntries: 10000,
-      similarityThreshold: 0.3,
-      logLevel: "info",
-      ...config,
-    };
-
-    this.memoryManager = createMemoryManager(this.config);
+  constructor(config: Config) {
+    this.config = config;
     this.server = new Server(
       {
-        name: "alsania-eme",
-        version: "0.1.0",
+        name: "eme-mcp-server",
+        version: "1.0.0",
       },
       {
         capabilities: {
@@ -138,770 +200,394 @@ export class EMEMCPServer {
         },
       },
     );
-
     this.setupToolHandlers();
-    this.setupErrorHandling();
   }
 
   private setupToolHandlers(): void {
-    // Tool 1: add
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: "add_memory",
-          description: "Add a new memory entry",
-          inputSchema: {
-            type: "object",
-            properties: {
-              text: { type: "string", description: "The memory text content" },
-              agentId: {
-                type: "string",
-                description: "ID of the agent creating the memory",
-              },
-              namespace: {
-                type: "string",
-                description: "Namespace for the memory",
-              },
-              tags: {
-                type: "array",
-                items: { type: "string" },
-                description: "Tags for categorization",
-              },
-              visibility: {
-                type: "string",
-                enum: ["private", "shared", "system"],
-                description: "Visibility level",
-              },
-              forceSave: {
-                type: "boolean",
-                description: "Force save even if memory gate rejects",
-              },
-            },
-            required: ["text"],
+    // List available tools
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      return {
+        tools: [
+          {
+            name: "add_memory",
+            description: "Add a new memory entry",
+            inputSchema: zodToJsonSchema(AddMemorySchema, schemaOptions),
           },
-        },
-        {
-          name: "search_memory",
-          description: "Search memories using semantic and graph search",
-          inputSchema: {
-            type: "object",
-            properties: {
-              query: { type: "string", description: "Search query" },
-              limit: {
-                type: "number",
-                description: "Maximum results to return",
-              },
-              namespace: { type: "string", description: "Filter by namespace" },
-              includeGraph: {
-                type: "boolean",
-                description: "Include graph context in results",
-              },
-            },
-            required: ["query"],
+          {
+            name: "search_memories",
+            description: "Search memories by query",
+            inputSchema: zodToJsonSchema(SearchMemorySchema, schemaOptions),
           },
-        },
-        {
-          name: "update_memory",
-          description: "Update an existing memory entry",
-          inputSchema: {
-            type: "object",
-            properties: {
-              id: { type: "string", description: "Memory ID to update" },
-              text: { type: "string", description: "New text content" },
-              tags: {
-                type: "array",
-                items: { type: "string" },
-                description: "New tags",
-              },
-              visibility: {
-                type: "string",
-                enum: ["private", "shared", "system"],
-                description: "New visibility level",
-              },
-            },
-            required: ["id"],
+          {
+            name: "get_memory",
+            description: "Get a specific memory by ID",
+            inputSchema: zodToJsonSchema(GetMemorySchema, schemaOptions),
           },
-        },
-        {
-          name: "delete_memory",
-          description: "Delete a memory entry (soft delete)",
-          inputSchema: {
-            type: "object",
-            properties: {
-              id: { type: "string", description: "Memory ID to delete" },
-            },
-            required: ["id"],
+          {
+            name: "update_memory",
+            description: "Update an existing memory",
+            inputSchema: zodToJsonSchema(UpdateMemorySchema, schemaOptions),
           },
-        },
-        {
-          name: "list_memories",
-          description: "List memories with optional filtering",
-          inputSchema: {
-            type: "object",
-            properties: {
-              namespace: { type: "string", description: "Filter by namespace" },
-              limit: {
-                type: "number",
-                description: "Maximum results to return",
-              },
-              offset: { type: "number", description: "Pagination offset" },
-            },
+          {
+            name: "delete_memory",
+            description: "Delete a memory by ID",
+            inputSchema: zodToJsonSchema(DeleteMemorySchema, schemaOptions),
           },
-        },
-        {
-          name: "graph_add_node",
-          description: "Add a node to the knowledge graph",
-          inputSchema: {
-            type: "object",
-            properties: {
-              type: {
-                type: "string",
-                enum: [
-                  "concept",
-                  "event",
-                  "person",
-                  "tool",
-                  "task",
-                  "entity",
-                  "project",
-                  "state",
-                ],
-                description: "Node type",
-              },
-              name: { type: "string", description: "Node name" },
-              properties: {
-                type: "object",
-                description: "Additional properties",
-              },
-            },
-            required: ["type", "name"],
+          {
+            name: "create_entities",
+            description: "Create multiple new entities in the knowledge graph",
+            inputSchema: zodToJsonSchema(CreateEntitiesSchema, schemaOptions),
           },
-        },
-        {
-          name: "graph_add_edge",
-          description: "Add an edge between graph nodes",
-          inputSchema: {
-            type: "object",
-            properties: {
-              from: { type: "string", description: "Source node ID" },
-              to: { type: "string", description: "Target node ID" },
-              type: {
-                type: "string",
-                enum: [
-                  "related_to",
-                  "is",
-                  "part_of",
-                  "changed_from",
-                  "updated_on",
-                  "owned_by",
-                  "assigned_to",
-                ],
-                description: "Edge type",
-              },
-              weight: { type: "number", description: "Edge weight" },
-              properties: {
-                type: "object",
-                description: "Additional properties",
-              },
-            },
-            required: ["from", "to", "type"],
+          {
+            name: "create_relations",
+            description:
+              "Create multiple new relations between entities in the knowledge graph. Relations should be in active voice",
+            inputSchema: zodToJsonSchema(CreateRelationsSchema, schemaOptions),
           },
-        },
-        {
-          name: "snapshot_save",
-          description: "Create a memory snapshot",
-          inputSchema: {
-            type: "object",
-            properties: {
-              name: { type: "string", description: "Snapshot name" },
-              description: {
-                type: "string",
-                description: "Snapshot description",
-              },
-            },
-            required: ["name"],
+          {
+            name: "add_observations",
+            description:
+              "Add new observations to existing entities in the knowledge graph",
+            inputSchema: zodToJsonSchema(AddObservationsSchema, schemaOptions),
           },
-        },
-        {
-          name: "snapshot_load",
-          description: "Load a memory snapshot",
-          inputSchema: {
-            type: "object",
-            properties: {
-              snapshotId: {
-                type: "string",
-                description: "Snapshot ID to load",
-              },
-            },
-            required: ["snapshotId"],
+          {
+            name: "delete_entities",
+            description:
+              "Delete multiple entities and their associated relations from the knowledge graph",
+            inputSchema: zodToJsonSchema(DeleteEntitiesSchema, schemaOptions),
           },
-        },
-        {
-          name: "moderation_review",
-          description: "Review and moderate shared memory entries (Admin only)",
-          inputSchema: {
-            type: "object",
-            properties: {
-              action: {
-                type: "string",
-                enum: ["approve", "reject", "promote"],
-                description: "Action to take",
-              },
-              memoryId: {
-                type: "string",
-                description: "Memory ID to moderate",
-              },
-              reason: { type: "string", description: "Reason for action" },
-            },
-            required: ["action", "memoryId"],
+          {
+            name: "delete_observations",
+            description:
+              "Delete specific observations from entities in the knowledge graph",
+            inputSchema: zodToJsonSchema(
+              DeleteObservationsSchema,
+              schemaOptions,
+            ),
           },
-        },
-        {
-          name: "graph_read",
-          description: "Read entire graph structure with nodes and edges",
-          inputSchema: {
-            type: "object",
-            properties: {
-              includeStats: {
-                type: "boolean",
-                description: "Include graph statistics",
-              },
-            },
+          {
+            name: "delete_relations",
+            description: "Delete multiple relations from the knowledge graph",
+            inputSchema: zodToJsonSchema(DeleteRelationsSchema, schemaOptions),
           },
-        },
-        {
-          name: "batch_add_memories",
-          description: "Add multiple memories at once for batch operations",
-          inputSchema: {
-            type: "object",
-            properties: {
-              memories: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    text: { type: "string" },
-                    agentId: { type: "string" },
-                    namespace: { type: "string" },
-                    tags: { type: "array", items: { type: "string" } },
-                    visibility: {
-                      type: "string",
-                      enum: ["private", "shared", "system"],
-                    },
-                    forceSave: { type: "boolean" },
-                  },
-                  required: ["text"],
-                },
-              },
-            },
-            required: ["memories"],
+          {
+            name: "read_graph",
+            description: "Read the entire knowledge graph",
+            inputSchema: zodToJsonSchema(
+              z.object({}).describe("Read the entire knowledge graph"),
+              schemaOptions,
+            ),
           },
-        },
-        {
-          name: "clear_namespace",
-          description: "Clear all nodes and edges in a namespace (daily reset)",
-          inputSchema: {
-            type: "object",
-            properties: {
-              namespace: { type: "string", description: "Namespace to clear" },
-              confirm: { type: "boolean", description: "Safety confirmation" },
-            },
-            required: ["namespace"],
+          {
+            name: "search_nodes",
+            description:
+              "Search for nodes in the knowledge graph based on a query",
+            inputSchema: zodToJsonSchema(
+              z.object({
+                query: z
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The search query to match against entity names, types, and observation content",
+                  ),
+              }),
+              schemaOptions,
+            ),
           },
-        },
-      ],
-    }));
+          {
+            name: "open_nodes",
+            description:
+              "Open specific nodes in the knowledge graph by their names",
+            inputSchema: zodToJsonSchema(OpenNodesSchema, schemaOptions),
+          },
+          {
+            name: "get_graph",
+            description: "Get the complete knowledge graph",
+            inputSchema: zodToJsonSchema(GetGraphSchema, schemaOptions),
+          },
+          {
+            name: "get_graph_stats",
+            description: "Get statistics about the knowledge graph",
+            inputSchema: zodToJsonSchema(GetGraphStatsSchema, schemaOptions),
+          },
+          {
+            name: "create_snapshot",
+            description: "Create a snapshot of memories or graph",
+            inputSchema: zodToJsonSchema(CreateSnapshotSchema, schemaOptions),
+          },
+          {
+            name: "list_snapshots",
+            description: "List all available snapshots",
+            inputSchema: zodToJsonSchema(ListSnapshotsSchema, schemaOptions),
+          },
+          {
+            name: "load_snapshot",
+            description: "Load a snapshot by ID",
+            inputSchema: zodToJsonSchema(LoadSnapshotSchema, schemaOptions),
+          },
+          {
+            name: "delete_snapshot",
+            description: "Delete a snapshot by ID",
+            inputSchema: zodToJsonSchema(DeleteSnapshotSchema, schemaOptions),
+          },
+          {
+            name: "get_config",
+            description: "Get current configuration",
+            inputSchema: zodToJsonSchema(GetConfigSchema, schemaOptions),
+          },
+          {
+            name: "update_config",
+            description: "Update configuration value",
+            inputSchema: zodToJsonSchema(UpdateConfigSchema, schemaOptions),
+          },
+        ],
+      };
+    });
 
     // Handle tool calls
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      try {
-        switch (name) {
-          case "add_memory": {
-            const params = AddMemorySchema.parse(args);
-            const result = await this.memoryManager.addMemory(
-              params.text,
-              params.agentId,
-              params.namespace,
-              params.tags,
-              params.visibility,
-              params.forceSave,
-            );
+      if (!this.memoryManager) {
+        throw new Error("Memory manager not initialized");
+      }
 
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: result.id
-                    ? `Memory added with ID: ${result.id}\nFilter results: ${JSON.stringify(result.filter, null, 2)}`
-                    : `Memory rejected by gate. Filter results: ${JSON.stringify(result.filter, null, 2)}`,
-                },
-              ],
-            };
-          }
-
-          case "search_memory": {
-            const params = SearchMemorySchema.parse(args);
-            const results = await this.memoryManager.search(
-              params.query,
-              params.limit,
-              params.namespace,
-              params.includeGraph,
-            );
-
-            const formattedResults = results
-              .map(
-                (result, index) =>
-                  `Result ${index + 1} (Score: ${result.score.toFixed(3)}):\n` +
-                  `Memory: ${result.memory.text.substring(0, 100)}...\n` +
-                  `Agent: ${result.memory.metadata.agentId}, Namespace: ${result.memory.metadata.namespace}\n` +
-                  (result.graphContext?.length
-                    ? `Graph Context: ${result.graphContext.length} related nodes\n`
-                    : ""),
-              )
-              .join("\n---\n");
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    results.length > 0
-                      ? `Found ${results.length} memories:\n\n${formattedResults}`
-                      : "No memories found matching your query.",
-                },
-              ],
-            };
-          }
-
-          case "update_memory": {
-            const params = UpdateMemorySchema.parse(args);
-            const updates: any = {};
-
-            if (params.text) updates.text = params.text;
-            if (params.tags) updates.metadata = { tags: params.tags };
-            if (params.visibility)
-              updates.metadata = {
-                ...updates.metadata,
-                visibility: params.visibility,
-              };
-
-            const success = await this.memoryManager.updateMemory(
-              params.id,
-              updates,
-            );
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: success
-                    ? `Memory ${params.id} updated successfully`
-                    : `Failed to update memory ${params.id} (not found or no changes)`,
-                },
-              ],
-            };
-          }
-
-          case "delete_memory": {
-            const params = DeleteMemorySchema.parse(args);
-            const success = await this.memoryManager.deleteMemory(params.id);
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: success
-                    ? `Memory ${params.id} deleted successfully`
-                    : `Failed to delete memory ${params.id} (not found)`,
-                },
-              ],
-            };
-          }
-
-          case "list_memories": {
-            const params = ListMemoriesSchema.parse(args);
-            const memories = await this.memoryManager.listMemories(
-              params.namespace,
-              params.limit,
-              params.offset,
-            );
-
-            const formattedMemories = memories
-              .map(
-                (memory, index) =>
-                  `${index + 1}. ${memory.id}: ${memory.text.substring(0, 80)}...\n` +
-                  `   Agent: ${memory.metadata.agentId}, Created: ${memory.createdAt.toISOString()}`,
-              )
-              .join("\n");
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    memories.length > 0
-                      ? `Found ${memories.length} memories:\n\n${formattedMemories}`
-                      : "No memories found.",
-                },
-              ],
-            };
-          }
-
-          case "graph_add_node": {
-            GraphAddNodeSchema.parse(args); // TODO: Implement graph node addition
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Graph node addition not yet implemented",
-                },
-              ],
-            };
-          }
-
-          case "graph_add_edge": {
-            GraphAddEdgeSchema.parse(args); // TODO: Implement graph edge addition
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Graph edge addition not yet implemented",
-                },
-              ],
-            };
-          }
-
-          case "snapshot_save": {
-            const params = SnapshotSchema.parse(args);
-            const snapshotId = await this.memoryManager.createSnapshot(
-              params.name,
-              params.description,
-            );
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Snapshot created with ID: ${snapshotId}`,
-                },
-              ],
-            };
-          }
-
-          case "snapshot_load": {
-            const params = LoadSnapshotSchema.parse(args);
-            const success = await this.memoryManager.loadSnapshot(
-              params.snapshotId,
-            );
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: success
-                    ? `Snapshot ${params.snapshotId} loaded successfully`
-                    : `Failed to load snapshot ${params.snapshotId}`,
-                },
-              ],
-            };
-          }
-
-          case "moderation_review": {
-            // TODO: Implement moderation
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Memory moderation not yet implemented",
-                },
-              ],
-            };
-          }
-
-          case "graph_read": {
-            const params = GraphReadSchema.parse(args);
-
-            // Get all nodes and edges
-            const graphStore = this.memoryManager.getGraphStore();
-            const nodes = await graphStore.findNodes();
-            const edges = await graphStore.findEdges();
-
-            // Calculate statistics
-            const nodeTypes: Record<string, number> = {};
-            const edgeTypes: Record<string, number> = {};
-            const namespaces: Record<string, number> = {};
-
-            nodes.forEach((node) => {
-              nodeTypes[node.type] = (nodeTypes[node.type] || 0) + 1;
-              if (node.properties.namespace) {
-                namespaces[node.properties.namespace] =
-                  (namespaces[node.properties.namespace] || 0) + 1;
-              }
-            });
-
-            edges.forEach((edge) => {
-              edgeTypes[edge.type] = (edgeTypes[edge.type] || 0) + 1;
-            });
-
-            let response =
-              "Graph contains " +
-              nodes.length +
-              " nodes and " +
-              edges.length +
-              " edges";
-
-            if (params.includeStats) {
-              const stats = {
-                totalNodes: nodes.length,
-                totalEdges: edges.length,
-                nodeTypes: Object.entries(nodeTypes).map(([type, count]) => ({
-                  type,
-                  count,
-                })),
-                edgeTypes: Object.entries(edgeTypes).map(([type, count]) => ({
-                  type,
-                  count,
-                })),
-                namespaces: Object.entries(namespaces).map(
-                  ([namespace, count]) => ({ namespace, count }),
-                ),
-                density: nodes.length > 0 ? edges.length / nodes.length : 0,
-                lastUpdated: new Date(),
-              };
-              response += "\n\nStatistics:\n" + JSON.stringify(stats, null, 2);
-            }
-
-            // Show sample data
-            if (nodes.length > 0) {
-              response += "\n\nSample nodes (first 3):";
-              nodes.slice(0, 3).forEach((node, idx) => {
-                response +=
-                  "\n" + (idx + 1) + ". " + node.type + ": " + node.name;
-                if (node.properties.namespace) {
-                  response += " (namespace: " + node.properties.namespace + ")";
-                }
-              });
-            }
-
-            if (edges.length > 0) {
-              response += "\n\nSample edges (first 3):";
-              edges.slice(0, 3).forEach((edge, idx) => {
-                response +=
-                  "\n" +
-                  (idx + 1) +
-                  ". " +
-                  edge.from +
-                  " → " +
-                  edge.to +
-                  " (" +
-                  edge.type +
-                  ")";
-              });
-            }
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: response,
-                },
-              ],
-            };
-          }
-
-          case "batch_add_memories": {
-            const params = BatchAddMemoriesSchema.parse(args);
-
-            const results = {
-              successful: 0,
-              failed: 0,
-              memoryIds: [] as string[],
-              errors: [] as Array<{ index: number; error: string }>,
-            };
-
-            // Process memories sequentially
-            for (let i = 0; i < params.memories.length; i++) {
-              const memory = params.memories[i];
-              try {
-                const result = await this.memoryManager.addMemory(
-                  memory.text,
-                  memory.agentId || "unknown",
-                  memory.namespace || "default",
-                  memory.tags || [],
-                  memory.visibility || "private",
-                  memory.forceSave || false,
-                );
-
-                if (result.id) {
-                  results.successful++;
-                  results.memoryIds.push(result.id);
-                } else {
-                  results.failed++;
-                  results.errors.push({
-                    index: i,
-                    error:
-                      "Memory rejected by gate: " +
-                      JSON.stringify(result.filter),
-                  });
-                }
-              } catch (error) {
-                results.failed++;
-                results.errors.push({
-                  index: i,
-                  error: error instanceof Error ? error.message : String(error),
-                });
-              }
-            }
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    "Batch add completed:\n" +
-                    "• Successful: " +
-                    results.successful +
-                    "\n" +
-                    "• Failed: " +
-                    results.failed +
-                    "\n" +
-                    (results.errors.length > 0
-                      ? "\nErrors:\n" + JSON.stringify(results.errors, null, 2)
-                      : ""),
-                },
-              ],
-            };
-          }
-
-          case "clear_namespace": {
-            const params = ClearNamespaceSchema.parse(args);
-
-            if (!params.confirm) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      "⚠️ Safety check required\n" +
-                      'Add "confirm: true" to clear namespace: "' +
-                      params.namespace +
-                      '"\n' +
-                      "This will delete ALL nodes and edges in this namespace.",
-                  },
-                ],
-              };
-            }
-
-            // Get all nodes in the namespace
-            const graphStore = this.memoryManager.getGraphStore();
-            const allNodes = await graphStore.findNodes();
-            const nodesInNamespace = allNodes.filter(
-              (node) => node.properties.namespace === params.namespace,
-            );
-
-            let edgesCleared = 0;
-
-            // Delete nodes and their edges
-            for (const node of nodesInNamespace) {
-              // Find edges where this node is source or target
-              const edgesFrom = await graphStore.findEdges(
-                node.id,
-                undefined,
-                undefined,
-              );
-              const edgesTo = await graphStore.findEdges(
-                undefined,
-                node.id,
-                undefined,
-              );
-
-              // Delete edges
-              for (const edge of [...edgesFrom, ...edgesTo]) {
-                await graphStore.deleteEdge(edge.id);
-                edgesCleared++;
-              }
-
-              // Delete node
-              await graphStore.deleteNode(node.id);
-            }
-
-            // Note: Vector store namespace clearing would need vector store method
-            // For now, we clear graph only
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    '✅ Namespace cleared: "' +
-                    params.namespace +
-                    '"\n' +
-                    "• Nodes deleted: " +
-                    nodesInNamespace.length +
-                    "\n" +
-                    "• Edges deleted: " +
-                    edgesCleared +
-                    "\n" +
-                    "\nNote: Vector memories in this namespace are not cleared (requires vector store method).",
-                },
-              ],
-            };
-          }
-
-          default:
-            throw new Error(`Unknown tool: ${name}`);
-        }
-      } catch (error) {
-        if (error instanceof z.ZodError) {
-          const zodError = error as any;
-          const errorMessages = zodError.errors.map((err: any) => `${err.path}: ${err.message}`);
-          throw new Error(
-            `Invalid parameters: ${errorMessages.join(", ")}`,
+      switch (name) {
+        case "add_memory": {
+          const { text, agentId, namespace, tags, visibility } =
+            AddMemorySchema.parse(args);
+          const id = await this.memoryManager.addMemory(
+            text,
+            agentId || "unknown",
+            namespace || "default",
+            tags || [],
+            visibility || "private",
           );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify({ id, success: true }) },
+            ],
+          };
         }
-        throw error;
+
+        case "search_memories": {
+          const { query, limit, namespace, includeGraph } =
+            SearchMemorySchema.parse(args);
+          const results = await this.memoryManager.searchMemories(
+            query,
+            limit,
+            namespace,
+          );
+          let graphData = null;
+          if (includeGraph) {
+            const graph = await this.memoryManager.getGraph();
+            graphData = graph;
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ results, graph: graphData }, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_memory": {
+          const { id } = GetMemorySchema.parse(args);
+          const memory = await this.memoryManager.getMemory(id);
+          return {
+            content: [{ type: "text", text: JSON.stringify(memory, null, 2) }],
+          };
+        }
+
+        case "update_memory": {
+          const { id, text, tags } = UpdateMemorySchema.parse(args);
+          const updates: Partial<any> = {};
+          if (text) updates.text = text;
+          if (tags) updates.metadata = { tags };
+          const success = await this.memoryManager.updateMemory(id, updates);
+          return {
+            content: [{ type: "text", text: JSON.stringify({ success }) }],
+          };
+        }
+
+        case "delete_memory": {
+          const { id } = DeleteMemorySchema.parse(args);
+          const success = await this.memoryManager.deleteMemory(id);
+          return {
+            content: [{ type: "text", text: JSON.stringify({ success }) }],
+          };
+        }
+
+        case "get_graph": {
+          const graph = await this.memoryManager.getGraph();
+          return {
+            content: [{ type: "text", text: JSON.stringify(graph, null, 2) }],
+          };
+        }
+
+        case "get_graph_stats": {
+          const stats = await this.memoryManager.getGraphStats();
+          return {
+            content: [{ type: "text", text: JSON.stringify(stats, null, 2) }],
+          };
+        }
+
+        case "create_snapshot": {
+          const { name, type, description } = CreateSnapshotSchema.parse(args);
+          const snapshot = await this.memoryManager.createSnapshot(
+            name,
+            type,
+            description,
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(snapshot, null, 2) },
+            ],
+          };
+        }
+
+        case "list_snapshots": {
+          const { type } = ListSnapshotsSchema.parse(args);
+          const snapshots = await this.memoryManager.listSnapshots(type);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(snapshots, null, 2) },
+            ],
+          };
+        }
+
+        case "load_snapshot": {
+          const { id } = LoadSnapshotSchema.parse(args);
+          const snapshot = await this.memoryManager.loadSnapshot(id);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(snapshot, null, 2) },
+            ],
+          };
+        }
+
+        case "delete_snapshot": {
+          const { id } = DeleteSnapshotSchema.parse(args);
+          const success = await this.memoryManager.deleteSnapshot(id);
+          return {
+            content: [{ type: "text", text: JSON.stringify({ success }) }],
+          };
+        }
+
+        case "get_config": {
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(this.config, null, 2) },
+            ],
+          };
+        }
+
+        case "update_config": {
+          const { key, value } = UpdateConfigSchema.parse(args);
+          (this.config as any)[key] = value;
+          return {
+            content: [
+              { type: "text", text: JSON.stringify({ success: true }) },
+            ],
+          };
+        }
+
+        case "create_entities": {
+          const { entities } = CreateEntitiesSchema.parse(args);
+          const results = await this.memoryManager.createEntities(entities);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case "create_relations": {
+          const { relations } = CreateRelationsSchema.parse(args);
+          const results = await this.memoryManager.createRelations(relations);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case "add_observations": {
+          const { observations } = AddObservationsSchema.parse(args);
+          const results =
+            await this.memoryManager.addObservations(observations);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case "delete_entities": {
+          const { entityNames } = DeleteEntitiesSchema.parse(args);
+          const results = await this.memoryManager.deleteEntities(entityNames);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case "delete_observations": {
+          const { deletions } = DeleteObservationsSchema.parse(args);
+          const results =
+            await this.memoryManager.deleteObservations(deletions);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case "delete_relations": {
+          const { relations } = DeleteRelationsSchema.parse(args);
+          const results = await this.memoryManager.deleteRelations(relations);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case "read_graph": {
+          const graph = await this.memoryManager.getGraph();
+          return {
+            content: [{ type: "text", text: JSON.stringify(graph, null, 2) }],
+          };
+        }
+
+        case "search_nodes": {
+          const { query } = args as { query: string };
+          const results = await this.memoryManager.searchNodes(query);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case "open_nodes": {
+          const { names } = OpenNodesSchema.parse(args);
+          const results = await this.memoryManager.openNodes(names);
+          return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
       }
     });
   }
 
-  private setupErrorHandling(): void {
-    this.server.onerror = (error) => {
-      console.error("[EME MCP Server Error]", error);
-    };
-
-    process.on("SIGINT", async () => {
-      await this.cleanup();
-      process.exit(0);
-    });
+  async initialize(): Promise<void> {
+    this.memoryManager = await createMemoryManager(this.config);
+    console.error("[EME-MCP] Memory manager initialized");
   }
 
-  async start(): Promise<void> {
-    try {
-      await this.memoryManager.initialize();
-      console.error("Alsania EME MCP Server starting...");
-
-      const transport = new StdioServerTransport();
-      await this.server.connect(transport);
-
-      console.error("Alsania EME MCP Server ready");
-    } catch (error) {
-      console.error("Failed to start EME MCP Server:", error);
-      await this.cleanup();
-      process.exit(1);
-    }
+  async run(): Promise<void> {
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
+    console.error("[EME-MCP] Server running on stdio");
   }
 
-  async cleanup(): Promise<void> {
-    try {
+  async close(): Promise<void> {
+    if (this.memoryManager) {
       await this.memoryManager.close();
-      console.error("EME MCP Server cleanup completed");
-    } catch (error) {
-      console.error("Error during cleanup:", error);
     }
+    await this.server.close();
   }
 }
-
-// Note: CLI logic moved to src/index.ts for single entry point
-// This file is now a pure MCP server class implementation

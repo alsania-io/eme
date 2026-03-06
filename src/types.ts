@@ -62,13 +62,136 @@ export interface Snapshot {
   timestamp: number;
   size: number;
   checksum: string;
+  cid?: string;
+}
+
+export interface SnapshotMetadata {
+  id: string;
+  name: string;
+  description?: string;
+  timestamp: number;
+  cid?: string;
+  size: number;
+  type: "memory" | "graph" | "full";
 }
 
 export interface MemoryGateFilter {
-  prototypeSimilarity: number; // 0-1
-  tfidfRelevance: number; // 0-1
-  llmCompression?: string; // compressed/summarized version
+  prototypeSimilarity: number;
+  tfidfRelevance: number;
+  llmCompression?: string;
   shouldSave: boolean;
+}
+
+export interface GraphStats {
+  totalNodes: number;
+  totalEdges: number;
+  nodeTypes: Array<{ type: string; count: number }>;
+  edgeTypes: Array<{ type: string; count: number }>;
+  namespaces: Array<{ namespace: string; count: number }>;
+  density: number;
+  lastUpdated: Date;
+}
+
+export interface IGraphStore {
+  // Core Node Methods
+  addNode(
+    node: Omit<GraphNode, "id" | "createdAt" | "updatedAt">,
+  ): Promise<string>;
+  getNode(id: string): Promise<GraphNode | null>;
+  updateNode(id: string, updates: Partial<GraphNode>): Promise<boolean>;
+  deleteNode(id: string): Promise<boolean>;
+
+  // Core Edge Methods
+  addEdge(edge: Omit<GraphEdge, "id" | "createdAt">): Promise<string>;
+  getEdge(id: string): Promise<GraphEdge | null>;
+  updateEdge(id: string, updates: Partial<GraphEdge>): Promise<boolean>;
+  deleteEdge(id: string): Promise<boolean>;
+
+  // Query Methods
+  findNodes(
+    type?: string,
+    properties?: Record<string, any>,
+  ): Promise<GraphNode[]>;
+  findEdges(from?: string, to?: string, type?: string): Promise<GraphEdge[]>;
+  getNeighbors(
+    nodeId: string,
+    edgeType?: string,
+  ): Promise<{ node: GraphNode; edge: GraphEdge }[]>;
+
+  // Graph Methods
+  getAllNodes(): Promise<GraphNode[]>;
+  getAllEdges(): Promise<GraphEdge[]>;
+  getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }>;
+  getGraphStats(): Promise<GraphStats>;
+  clear(): Promise<void>;
+
+  // Enhanced Methods (Creator Workflow)
+  clearNamespace(namespace: string): Promise<number>;
+  findNodesByNamespace(namespace: string): Promise<GraphNode[]>;
+  batchAddNodes(
+    nodes: Omit<GraphNode, "id" | "createdAt" | "updatedAt">[],
+  ): Promise<string[]>;
+  batchAddEdges(
+    edges: Omit<GraphEdge, "id" | "createdAt">[],
+  ): Promise<string[]>;
+
+  // Optional Lifecycle
+  createSnapshot?(
+    name: string,
+  ): Promise<{ id: string; cid?: string; size: number }>;
+  close?(): Promise<void>;
+}
+
+export interface IVectorStore {
+  add(
+    entry: Omit<MemoryEntry, "id" | "createdAt" | "updatedAt">,
+  ): Promise<string>;
+  search(
+    queryEmbedding: number[],
+    limit: number,
+    namespace?: string,
+  ): Promise<Array<{ entry: MemoryEntry; score: number }>>;
+  get(id: string): Promise<MemoryEntry | null>;
+  update(id: string, updates: Partial<MemoryEntry>): Promise<boolean>;
+  delete(id: string): Promise<boolean>;
+  list(
+    namespace?: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<MemoryEntry[]>;
+  getAll(): Promise<MemoryEntry[]>;
+  clear(): Promise<void>;
+  close?(): Promise<void>;
+}
+
+export interface ISnapshotStore {
+  saveSnapshot(
+    name: string,
+    data: any,
+    type: "memory" | "graph" | "full",
+    description?: string,
+    metadata?: Record<string, any>,
+  ): Promise<{ id: string; cid?: string; size: number }>;
+  loadSnapshot(id: string): Promise<any | null>;
+  listSnapshots(
+    type?: "memory" | "graph" | "full",
+  ): Promise<SnapshotMetadata[]>;
+  deleteSnapshot(id: string): Promise<boolean>;
+  getStats(): Promise<{
+    snapshotCount: number;
+    totalSize: number;
+    [key: string]: any;
+  }>;
+  close(): Promise<void>;
+}
+
+export interface IPFSConfig {
+  heliaConfig?: Record<string, any>;
+  ipfsGateway?: string;
+  ipfsToken?: string;
+  ipfsPinningService?: string;
+  ipfsPinToken?: string;
+  namespace?: string;
 }
 
 export interface Config {
@@ -95,9 +218,9 @@ export interface Config {
   graphStorePath?: string;
 
   // Snapshot configuration
-  snapshotStore: "filesystem" | "ipfs" | "drive" | "s3";
-  snapshotPath: string;
-  snapshotConfig?: Record<string, any>;
+  snapshotStore: "filesystem" | "ipfs" | "drive" | "s3" | "filebase";
+  snapshotPath?: string;
+  snapshotConfig?: IPFSConfig;
 
   // Memory gate configuration
   memoryGateEnabled: boolean;
@@ -110,16 +233,27 @@ export interface Config {
   maxMemoryEntries: number;
   similarityThreshold: number;
   logLevel: "debug" | "info" | "warn" | "error";
+
+  // OpenRouter
+  openRouterApiKey?: string;
+  openRouterReferer?: string;
+  openRouterTitle?: string;
+
+  // Fallback embeddings
+  fallbackEmbeddingModel?:
+    | "local"
+    | "openai"
+    | "cohere"
+    | "huggingface"
+    | "openrouter";
+  fallbackEmbeddingDimension?: number;
 }
 
-export interface GraphStats {
-  totalNodes: number;
-  totalEdges: number;
-  nodeTypes: Array<{ type: string; count: number }>;
-  edgeTypes: Array<{ type: string; count: number }>;
-  namespaces: Array<{ namespace: string; count: number }>;
-  density: number;
-  lastUpdated: Date;
+// MCP Server Request/Response Types
+export interface GraphReadResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: GraphStats;
 }
 
 export interface BatchMemoryRequest {
