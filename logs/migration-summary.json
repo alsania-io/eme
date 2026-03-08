@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-03-01T23:14:26.637Z",
+  "duration": "0.30s",
+  "stats": {
+    "entities": {
+      "total": 0,
+      "migrated": 0,
+      "failed": 0
+    },
+    "relations": {
+      "total": 0,
+      "migrated": 0,
+      "failed": 0
+    },
+    "observations": {
+      "total": 0,
+      "migrated": 0,
+      "failed": 0
+    },
+    "collections": {},
+    "startTime": 1772406866338,
+    "endTime": 1772406866637
+  },
+  "config": {
+    "qdrant": {
+      "url": "http://localhost:6333",
+      "collection": "eme_vectors"
+    },
+    "graph": {
+      "path": "/home/sigma/Desktop/echo-lab/eme/storage/graph.jsonl"
+    },
+    "memoryCache": {
+      "url": "http://localhost:3057/mcp"
+    },
+    "output": {
+      "log": "/home/sigma/Desktop/echo-lab/eme/logs/migration.log",
+      "summary": "/home/sigma/Desktop/echo-lab/eme/logs/migration-summary.json"
+    }
+  }
+}
