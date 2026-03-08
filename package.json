@@ -1,6 +1,6 @@
 {
   "name": "@alsania-io/eme",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Echo Memory Engine - Alsania's sovereign memory system",
   "repository": {
     "type": "git",
@@ -21,7 +21,6 @@
     "server": "node dist/index.js server",
     "test:cli": "node dist/index.js test",
     "config": "node dist/index.js config",
-    "version": "node dist/index.js version",
     "help": "node dist/index.js help",
     "test": "jest || true",
     "test:simple": "node tests/test-eme.js || true",
