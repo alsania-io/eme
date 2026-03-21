@@ -8,6 +8,8 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { createMemoryManager, MemoryManager } from "./memory-manager.js";
 import type { Config, SearchResult } from "./types.js";
+import { LocalRAG } from "./local-rag.js";
+import { LargeFileHandler } from "./large-file.js";
 import { randomUUID } from "crypto";
 
 // Schema definitions with proper validation
@@ -173,7 +175,76 @@ const OpenNodesSchema = z.object({
   names: z.array(z.string()).describe("Array of entity names to retrieve"),
 });
 
-// Options for zodToJsonSchema to include descriptions and proper formatting
+// Local-RAG Schemas
+const QueryDocumentsSchema = z.object({
+  query: z.string().min(1).describe("Search query. Include specific terms and add context if needed."),
+  limit: z.number().int().min(1).max(50).optional().default(10).describe("Maximum number of results"),
+});
+
+const IngestFileSchema = z.object({
+  filePath: z.string().describe("Absolute path to the file to ingest"),
+});
+
+const IngestDataSchema = z.object({
+  content: z.string().describe("The content to ingest"),
+  metadata: z.object({
+    source: z.string().describe("Source identifier"),
+    format: z.enum(["text", "html", "markdown"]).describe("Content format"),
+  }).describe("Metadata for the ingested data"),
+});
+
+const DeleteDocumentSchema = z.object({
+  filePath: z.string().optional().describe("Absolute path to the file"),
+  source: z.string().optional().describe("Source identifier"),
+});
+
+const ListFilesSchema = z.object({}).describe("List all ingested files");
+
+const LocalRAGStatusSchema = z.object({}).describe("Get system status");
+
+// Large-File Schemas
+const ReadLargeFileChunkSchema = z.object({
+  filePath: z.string().describe("Absolute path to the file"),
+  chunkIndex: z.number().int().min(0).optional().default(0).describe("Zero-based chunk index"),
+  linesPerChunk: z.number().int().min(1).optional().describe("Number of lines per chunk"),
+  includeLineNumbers: z.boolean().optional().default(false).describe("Include line numbers"),
+});
+
+const SearchInLargeFileSchema = z.object({
+  filePath: z.string().describe("Absolute path to the file"),
+  pattern: z.string().describe("Search pattern"),
+  caseSensitive: z.boolean().optional().default(false).describe("Case sensitive search"),
+  regex: z.boolean().optional().default(false).describe("Use regex pattern"),
+  maxResults: z.number().int().min(1).max(1000).optional().default(100).describe("Maximum results"),
+  contextBefore: z.number().int().min(0).optional().default(2).describe("Context lines before"),
+  contextAfter: z.number().int().min(0).optional().default(2).describe("Context lines after"),
+  startLine: z.number().int().min(1).optional().describe("Start searching from line"),
+  endLine: z.number().int().min(1).optional().describe("End searching at line"),
+});
+
+const GetFileStructureSchema = z.object({
+  filePath: z.string().describe("Absolute path to the file"),
+});
+
+const NavigateToLineSchema = z.object({
+  filePath: z.string().describe("Absolute path to the file"),
+  lineNumber: z.number().int().min(1).describe("Line number to navigate to (1-indexed)"),
+  contextLines: z.number().int().min(0).optional().default(5).describe("Context lines before and after"),
+});
+
+const GetFileSummarySchema = z.object({
+  filePath: z.string().describe("Absolute path to the file"),
+});
+
+const StreamLargeFileSchema = z.object({
+  filePath: z.string().describe("Absolute path to the file"),
+  chunkSize: z.number().int().min(1024).optional().default(65536).describe("Chunk size in bytes"),
+  startOffset: z.number().int().min(0).optional().default(0).describe("Starting byte offset"),
+  maxBytes: z.number().int().min(1).optional().describe("Maximum bytes to stream"),
+  maxChunks: z.number().int().min(1).optional().default(10).describe("Maximum number of chunks"),
+});
+
+// Options for zodToJsonSchema
 const schemaOptions = {
   $refStrategy: "none" as const,
   target: "jsonSchema7" as const,
@@ -184,15 +255,16 @@ const schemaOptions = {
 export class EMEMCPServer {
   private server: Server;
   private memoryManager: MemoryManager | null = null;
+  private localRAG: LocalRAG | null = null;
+  private largeFileHandler: LargeFileHandler | null = null;
   private config: Config;
-  private tools: Map<string, any> = new Map();
 
   constructor(config: Config) {
     this.config = config;
     this.server = new Server(
       {
         name: "eme-mcp-server",
-        version: "1.0.0",
+        version: "1.1.0",
       },
       {
         capabilities: {
@@ -208,138 +280,43 @@ export class EMEMCPServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
         tools: [
-          {
-            name: "add_memory",
-            description: "Add a new memory entry",
-            inputSchema: zodToJsonSchema(AddMemorySchema, schemaOptions),
-          },
-          {
-            name: "search_memories",
-            description: "Search memories by query",
-            inputSchema: zodToJsonSchema(SearchMemorySchema, schemaOptions),
-          },
-          {
-            name: "get_memory",
-            description: "Get a specific memory by ID",
-            inputSchema: zodToJsonSchema(GetMemorySchema, schemaOptions),
-          },
-          {
-            name: "update_memory",
-            description: "Update an existing memory",
-            inputSchema: zodToJsonSchema(UpdateMemorySchema, schemaOptions),
-          },
-          {
-            name: "delete_memory",
-            description: "Delete a memory by ID",
-            inputSchema: zodToJsonSchema(DeleteMemorySchema, schemaOptions),
-          },
-          {
-            name: "create_entities",
-            description: "Create multiple new entities in the knowledge graph",
-            inputSchema: zodToJsonSchema(CreateEntitiesSchema, schemaOptions),
-          },
-          {
-            name: "create_relations",
-            description:
-              "Create multiple new relations between entities in the knowledge graph. Relations should be in active voice",
-            inputSchema: zodToJsonSchema(CreateRelationsSchema, schemaOptions),
-          },
-          {
-            name: "add_observations",
-            description:
-              "Add new observations to existing entities in the knowledge graph",
-            inputSchema: zodToJsonSchema(AddObservationsSchema, schemaOptions),
-          },
-          {
-            name: "delete_entities",
-            description:
-              "Delete multiple entities and their associated relations from the knowledge graph",
-            inputSchema: zodToJsonSchema(DeleteEntitiesSchema, schemaOptions),
-          },
-          {
-            name: "delete_observations",
-            description:
-              "Delete specific observations from entities in the knowledge graph",
-            inputSchema: zodToJsonSchema(
-              DeleteObservationsSchema,
-              schemaOptions,
-            ),
-          },
-          {
-            name: "delete_relations",
-            description: "Delete multiple relations from the knowledge graph",
-            inputSchema: zodToJsonSchema(DeleteRelationsSchema, schemaOptions),
-          },
-          {
-            name: "read_graph",
-            description: "Read the entire knowledge graph",
-            inputSchema: zodToJsonSchema(
-              z.object({}).describe("Read the entire knowledge graph"),
-              schemaOptions,
-            ),
-          },
-          {
-            name: "search_nodes",
-            description:
-              "Search for nodes in the knowledge graph based on a query",
-            inputSchema: zodToJsonSchema(
-              z.object({
-                query: z
-                  .string()
-                  .min(1)
-                  .describe(
-                    "The search query to match against entity names, types, and observation content",
-                  ),
-              }),
-              schemaOptions,
-            ),
-          },
-          {
-            name: "open_nodes",
-            description:
-              "Open specific nodes in the knowledge graph by their names",
-            inputSchema: zodToJsonSchema(OpenNodesSchema, schemaOptions),
-          },
-          {
-            name: "get_graph",
-            description: "Get the complete knowledge graph",
-            inputSchema: zodToJsonSchema(GetGraphSchema, schemaOptions),
-          },
-          {
-            name: "get_graph_stats",
-            description: "Get statistics about the knowledge graph",
-            inputSchema: zodToJsonSchema(GetGraphStatsSchema, schemaOptions),
-          },
-          {
-            name: "create_snapshot",
-            description: "Create a snapshot of memories or graph",
-            inputSchema: zodToJsonSchema(CreateSnapshotSchema, schemaOptions),
-          },
-          {
-            name: "list_snapshots",
-            description: "List all available snapshots",
-            inputSchema: zodToJsonSchema(ListSnapshotsSchema, schemaOptions),
-          },
-          {
-            name: "load_snapshot",
-            description: "Load a snapshot by ID",
-            inputSchema: zodToJsonSchema(LoadSnapshotSchema, schemaOptions),
-          },
-          {
-            name: "delete_snapshot",
-            description: "Delete a snapshot by ID",
-            inputSchema: zodToJsonSchema(DeleteSnapshotSchema, schemaOptions),
-          },
-          {
-            name: "get_config",
-            description: "Get current configuration",
-            inputSchema: zodToJsonSchema(GetConfigSchema, schemaOptions),
-          },
-          {
-            name: "update_config",
-            description: "Update configuration value",
-            inputSchema: zodToJsonSchema(UpdateConfigSchema, schemaOptions),
-          },
+          // Existing EME tools
+          { name: "add_memory", description: "Add a new memory entry", inputSchema: zodToJsonSchema(AddMemorySchema, schemaOptions) },
+          { name: "search_memories", description: "Search memories by query", inputSchema: zodToJsonSchema(SearchMemorySchema, schemaOptions) },
+          { name: "get_memory", description: "Get a specific memory by ID", inputSchema: zodToJsonSchema(GetMemorySchema, schemaOptions) },
+          { name: "update_memory", description: "Update an existing memory", inputSchema: zodToJsonSchema(UpdateMemorySchema, schemaOptions) },
+          { name: "delete_memory", description: "Delete a memory by ID", inputSchema: zodToJsonSchema(DeleteMemorySchema, schemaOptions) },
+          { name: "create_entities", description: "Create multiple new entities in the knowledge graph", inputSchema: zodToJsonSchema(CreateEntitiesSchema, schemaOptions) },
+          { name: "create_relations", description: "Create multiple new relations between entities", inputSchema: zodToJsonSchema(CreateRelationsSchema, schemaOptions) },
+          { name: "add_observations", description: "Add new observations to existing entities", inputSchema: zodToJsonSchema(AddObservationsSchema, schemaOptions) },
+          { name: "delete_entities", description: "Delete multiple entities and their associated relations", inputSchema: zodToJsonSchema(DeleteEntitiesSchema, schemaOptions) },
+          { name: "delete_observations", description: "Delete specific observations from entities", inputSchema: zodToJsonSchema(DeleteObservationsSchema, schemaOptions) },
+          { name: "delete_relations", description: "Delete multiple relations from the knowledge graph", inputSchema: zodToJsonSchema(DeleteRelationsSchema, schemaOptions) },
+          { name: "read_graph", description: "Read the entire knowledge graph", inputSchema: zodToJsonSchema(z.object({}), schemaOptions) },
+          { name: "search_nodes", description: "Search for nodes in the knowledge graph", inputSchema: zodToJsonSchema(z.object({ query: z.string() }), schemaOptions) },
+          { name: "open_nodes", description: "Open specific nodes in the knowledge graph", inputSchema: zodToJsonSchema(OpenNodesSchema, schemaOptions) },
+          { name: "get_graph", description: "Get the complete knowledge graph", inputSchema: zodToJsonSchema(GetGraphSchema, schemaOptions) },
+          { name: "get_graph_stats", description: "Get statistics about the knowledge graph", inputSchema: zodToJsonSchema(GetGraphStatsSchema, schemaOptions) },
+          { name: "create_snapshot", description: "Create a snapshot of memories or graph", inputSchema: zodToJsonSchema(CreateSnapshotSchema, schemaOptions) },
+          { name: "list_snapshots", description: "List all available snapshots", inputSchema: zodToJsonSchema(ListSnapshotsSchema, schemaOptions) },
+          { name: "load_snapshot", description: "Load a snapshot by ID", inputSchema: zodToJsonSchema(LoadSnapshotSchema, schemaOptions) },
+          { name: "delete_snapshot", description: "Delete a snapshot by ID", inputSchema: zodToJsonSchema(DeleteSnapshotSchema, schemaOptions) },
+          { name: "get_config", description: "Get current configuration", inputSchema: zodToJsonSchema(GetConfigSchema, schemaOptions) },
+          { name: "update_config", description: "Update configuration value", inputSchema: zodToJsonSchema(UpdateConfigSchema, schemaOptions) },
+          // Local-RAG tools
+          { name: "query_documents", description: "Search ingested documents. Your query words are matched exactly (keyword search). Your query meaning is matched semantically (vector search).", inputSchema: zodToJsonSchema(QueryDocumentsSchema, schemaOptions) },
+          { name: "ingest_file", description: "Ingest a document file (PDF, DOCX, TXT, MD) into the vector database for semantic search.", inputSchema: zodToJsonSchema(IngestFileSchema, schemaOptions) },
+          { name: "ingest_data", description: "Ingest content as a string, not from a file. Use for fetched web pages, copied text, or markdown strings.", inputSchema: zodToJsonSchema(IngestDataSchema, schemaOptions) },
+          { name: "delete_file", description: "Delete a previously ingested file or data from the vector database.", inputSchema: zodToJsonSchema(DeleteDocumentSchema, schemaOptions) },
+          { name: "list_files", description: "List all files and show which are ingested into the vector database.", inputSchema: zodToJsonSchema(ListFilesSchema, schemaOptions) },
+          { name: "local_rag_status", description: "Get system status including total documents, total chunks, database size.", inputSchema: zodToJsonSchema(LocalRAGStatusSchema, schemaOptions) },
+          // Large-File tools
+          { name: "read_large_file_chunk", description: "Read a specific chunk of a large file with intelligent chunking based on file type.", inputSchema: zodToJsonSchema(ReadLargeFileChunkSchema, schemaOptions) },
+          { name: "search_in_large_file", description: "Search for a pattern in a large file with context lines. Supports regex and case-sensitive search.", inputSchema: zodToJsonSchema(SearchInLargeFileSchema, schemaOptions) },
+          { name: "get_file_structure", description: "Analyze file structure and get comprehensive metadata including line statistics, recommended chunk size, and samples.", inputSchema: zodToJsonSchema(GetFileStructureSchema, schemaOptions) },
+          { name: "navigate_to_line", description: "Jump to a specific line in a large file with surrounding context lines.", inputSchema: zodToJsonSchema(NavigateToLineSchema, schemaOptions) },
+          { name: "get_file_summary", description: "Get comprehensive statistical summary of a file including line stats, character stats, and word count.", inputSchema: zodToJsonSchema(GetFileSummarySchema, schemaOptions) },
+          { name: "stream_large_file", description: "Stream a large file in chunks. Returns multiple chunks for processing very large files efficiently.", inputSchema: zodToJsonSchema(StreamLargeFileSchema, schemaOptions) },
         ],
       };
     });
@@ -352,221 +329,234 @@ export class EMEMCPServer {
         throw new Error("Memory manager not initialized");
       }
 
-      switch (name) {
-        case "add_memory": {
-          const { text, agentId, namespace, tags, visibility } =
-            AddMemorySchema.parse(args);
-          const id = await this.memoryManager.addMemory(
-            text,
-            agentId || "unknown",
-            namespace || "default",
-            tags || [],
-            visibility || "private",
-          );
-          return {
-            content: [
-              { type: "text", text: JSON.stringify({ id, success: true }) },
-            ],
-          };
-        }
+      if (!this.localRAG && this.memoryManager) {
+        // Initialize localRAG with the vector store from memoryManager
+        const vectorStore = this.memoryManager.getVectorStore();
+        this.localRAG = new LocalRAG(vectorStore);
+      }
 
+      if (!this.largeFileHandler) {
+        this.largeFileHandler = new LargeFileHandler();
+      }
+
+      switch (name) {
+        // EME Core Memory Cases
+        case "add_memory": {
+          const { text, agentId, namespace, tags, visibility } = AddMemorySchema.parse(args);
+          const id = await this.memoryManager.addMemory(text, agentId, namespace, tags, visibility);
+          return { content: [{ type: "text", text: JSON.stringify({ id, success: true }) }] };
+        }
+        
         case "search_memories": {
-          const { query, limit, namespace, includeGraph } =
-            SearchMemorySchema.parse(args);
-          const results = await this.memoryManager.searchMemories(
-            query,
-            limit,
-            namespace,
-          );
+          const { query, limit, namespace, includeGraph } = SearchMemorySchema.parse(args);
+          const results = await this.memoryManager.searchMemories(query, limit, namespace);
           let graphData = null;
           if (includeGraph) {
             const graph = await this.memoryManager.getGraph();
             graphData = graph;
           }
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ results, graph: graphData }, null, 2),
-              },
-            ],
-          };
+          return { content: [{ type: "text", text: JSON.stringify({ results, graph: graphData }, null, 2) }] };
         }
-
+        
         case "get_memory": {
           const { id } = GetMemorySchema.parse(args);
           const memory = await this.memoryManager.getMemory(id);
-          return {
-            content: [{ type: "text", text: JSON.stringify(memory, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(memory, null, 2) }] };
         }
-
+        
         case "update_memory": {
           const { id, text, tags } = UpdateMemorySchema.parse(args);
           const updates: Partial<any> = {};
           if (text) updates.text = text;
           if (tags) updates.metadata = { tags };
-          const success = await this.memoryManager.updateMemory(id, updates);
-          return {
-            content: [{ type: "text", text: JSON.stringify({ success }) }],
-          };
+          await this.memoryManager.updateMemory(id, updates);
+          return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
         }
-
+        
         case "delete_memory": {
           const { id } = DeleteMemorySchema.parse(args);
-          const success = await this.memoryManager.deleteMemory(id);
-          return {
-            content: [{ type: "text", text: JSON.stringify({ success }) }],
-          };
+          await this.memoryManager.deleteMemory(id);
+          return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
         }
-
+        
         case "get_graph": {
           const graph = await this.memoryManager.getGraph();
-          return {
-            content: [{ type: "text", text: JSON.stringify(graph, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(graph, null, 2) }] };
         }
-
+        
         case "get_graph_stats": {
           const stats = await this.memoryManager.getGraphStats();
-          return {
-            content: [{ type: "text", text: JSON.stringify(stats, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
         }
-
+        
         case "create_snapshot": {
           const { name, type, description } = CreateSnapshotSchema.parse(args);
-          const snapshot = await this.memoryManager.createSnapshot(
-            name,
-            type,
-            description,
-          );
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(snapshot, null, 2) },
-            ],
-          };
+          const snapshot = await this.memoryManager.createSnapshot(name, type, description);
+          return { content: [{ type: "text", text: JSON.stringify(snapshot, null, 2) }] };
         }
-
+        
         case "list_snapshots": {
           const { type } = ListSnapshotsSchema.parse(args);
           const snapshots = await this.memoryManager.listSnapshots(type);
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(snapshots, null, 2) },
-            ],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(snapshots, null, 2) }] };
         }
-
+        
         case "load_snapshot": {
           const { id } = LoadSnapshotSchema.parse(args);
           const snapshot = await this.memoryManager.loadSnapshot(id);
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(snapshot, null, 2) },
-            ],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(snapshot, null, 2) }] };
         }
-
+        
         case "delete_snapshot": {
           const { id } = DeleteSnapshotSchema.parse(args);
-          const success = await this.memoryManager.deleteSnapshot(id);
-          return {
-            content: [{ type: "text", text: JSON.stringify({ success }) }],
-          };
+          await this.memoryManager.deleteSnapshot(id);
+          return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
         }
-
+        
         case "get_config": {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(this.config, null, 2) },
-            ],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(this.config, null, 2) }] };
         }
-
+        
         case "update_config": {
           const { key, value } = UpdateConfigSchema.parse(args);
           (this.config as any)[key] = value;
-          return {
-            content: [
-              { type: "text", text: JSON.stringify({ success: true }) },
-            ],
-          };
+          return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
         }
-
+        
         case "create_entities": {
           const { entities } = CreateEntitiesSchema.parse(args);
           const results = await this.memoryManager.createEntities(entities);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
         case "create_relations": {
           const { relations } = CreateRelationsSchema.parse(args);
           const results = await this.memoryManager.createRelations(relations);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
         case "add_observations": {
           const { observations } = AddObservationsSchema.parse(args);
-          const results =
-            await this.memoryManager.addObservations(observations);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          const results = await this.memoryManager.addObservations(observations);
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
         case "delete_entities": {
           const { entityNames } = DeleteEntitiesSchema.parse(args);
           const results = await this.memoryManager.deleteEntities(entityNames);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
         case "delete_observations": {
           const { deletions } = DeleteObservationsSchema.parse(args);
-          const results =
-            await this.memoryManager.deleteObservations(deletions);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          const results = await this.memoryManager.deleteObservations(deletions);
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
         case "delete_relations": {
           const { relations } = DeleteRelationsSchema.parse(args);
           const results = await this.memoryManager.deleteRelations(relations);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
         case "read_graph": {
           const graph = await this.memoryManager.getGraph();
-          return {
-            content: [{ type: "text", text: JSON.stringify(graph, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(graph, null, 2) }] };
         }
-
+        
         case "search_nodes": {
           const { query } = args as { query: string };
           const results = await this.memoryManager.searchNodes(query);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
         case "open_nodes": {
           const { names } = OpenNodesSchema.parse(args);
           const results = await this.memoryManager.openNodes(names);
-          return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          };
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-
+        
+        // Local-RAG cases
+        case "query_documents": {
+          const { query, limit } = QueryDocumentsSchema.parse(args);
+          const results = await this.localRAG!.queryDocuments(query, limit);
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+        }
+        
+        case "ingest_file": {
+          const { filePath } = IngestFileSchema.parse(args);
+          const result = await this.localRAG!.ingestFile(filePath);
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
+        
+        case "ingest_data": {
+          const parsed = IngestDataSchema.parse(args);
+          const result = await this.localRAG!.ingestData(parsed.content, { source: parsed.metadata.source, format: parsed.metadata.format });
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
+        
+        case "delete_file": {
+          const { filePath, source } = DeleteDocumentSchema.parse(args);
+          if (filePath) {
+            const result = await this.localRAG!.deleteDocument(filePath);
+            return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+          } else if (source) {
+            // Handle deletion by source identifier
+            const result = await this.localRAG!.deleteDocument(source);
+            return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+          }
+          throw new Error("Either filePath or source must be provided");
+        }
+        
+        case "list_files": {
+          const files = this.localRAG!.listDocuments();
+          return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
+        }
+        
+        case "local_rag_status": {
+          const status = this.localRAG!.getStatus();
+          return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+        }
+        
+        // Large-File cases
+        case "read_large_file_chunk": {
+          const { filePath, chunkIndex, linesPerChunk, includeLineNumbers } = ReadLargeFileChunkSchema.parse(args);
+          const result = await this.largeFileHandler!.readChunk(filePath, chunkIndex, linesPerChunk, includeLineNumbers);
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
+        
+        case "search_in_large_file": {
+          const { filePath, pattern, caseSensitive, regex, maxResults, contextBefore, contextAfter, startLine, endLine } = SearchInLargeFileSchema.parse(args);
+          const results = await this.largeFileHandler!.searchInFile(filePath, pattern, caseSensitive, regex, maxResults, contextBefore, contextAfter, startLine, endLine);
+          return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+        }
+        
+        case "get_file_structure": {
+          const { filePath } = GetFileStructureSchema.parse(args);
+          const structure = await this.largeFileHandler!.getFileStructure(filePath);
+          return { content: [{ type: "text", text: JSON.stringify(structure, null, 2) }] };
+        }
+        
+        case "navigate_to_line": {
+          const { filePath, lineNumber, contextLines } = NavigateToLineSchema.parse(args);
+          const result = await this.largeFileHandler!.navigateToLine(filePath, lineNumber, contextLines);
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
+        
+        case "get_file_summary": {
+          const { filePath } = GetFileSummarySchema.parse(args);
+          const summary = await this.largeFileHandler!.getFileSummary(filePath);
+          return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+        }
+        
+        case "stream_large_file": {
+          const { filePath, chunkSize, startOffset, maxBytes, maxChunks } = StreamLargeFileSchema.parse(args);
+          const result = await this.largeFileHandler!.streamFile(filePath, chunkSize, startOffset, maxBytes, maxChunks);
+          // Convert buffers to base64 for JSON serialization
+          const chunks = result.chunks.map(chunk => chunk.toString('base64'));
+          return { content: [{ type: "text", text: JSON.stringify({ ...result, chunks }, null, 2) }] };
+        }
+        
         default:
           throw new Error(`Unknown tool: ${name}`);
       }

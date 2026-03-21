@@ -147,6 +147,9 @@ export interface MemoryManager {
   updateMemory(id: string, updates: Partial<MemoryEntry>): Promise<void>;
   deleteMemory(id: string): Promise<void>;
 
+  // Vector Store Access
+  getVectorStore(): IVectorStore;
+
   // Graph Methods
   getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }>;
   getGraphStats(): Promise<GraphStats>;
@@ -395,6 +398,13 @@ class MemoryManagerImpl implements MemoryManager {
   async deleteMemory(id: string): Promise<void> {
     await this.ensureInitialized();
     await this.vectorStore.delete(id);
+  }
+
+  getVectorStore(): IVectorStore {
+    if (!this.vectorStore) {
+      throw new Error("Vector store not initialized");
+    }
+    return this.vectorStore;
   }
 
   async getGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {

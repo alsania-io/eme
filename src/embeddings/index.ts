@@ -1,3 +1,3 @@
-export { OpenRouterEmbeddingProvider } from './openrouter';
+export { OpenRouterEmbeddingProvider } from "./openrouter";
 
 // Export other embedding providers as they're added
