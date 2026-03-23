@@ -35,7 +35,8 @@ export class OpenRouterEmbeddingProvider implements EmbeddingProvider {
       },
     });
     this.model = config.model || "nvidia/llama-nemotron-embed-vl-1b-v2:free";
-    this.dimension = config.dimension || 1024; // Nvidia model uses 1024 dimensions
+    // The Nvidia Llama Nemotron model uses 2048 dimensions
+    this.dimension = config.dimension || 2048;
     console.log(
       "[OpenRouter] Initialized with dimension:",
       this.dimension,

@@ -1,27 +1,17 @@
 {
   "embeddingModel": "openrouter",
   "embeddingModelPath": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
-  "embeddingDimension": 2048,
-
-  "openRouterApiKey": "sk-or-v1-***REMOVED-LEAKED-KEY***",
+  "embeddingDimension": 1024,
+  "openRouterApiKey": "${OPENROUTER_API_KEY}",
   "openRouterReferer": "https://alsania-io.com",
   "openRouterTitle": "Echo Memory Engine",
-
+  "fallbackEmbeddingModel": "local",
+  "fallbackEmbeddingDimension": 384,
   "vectorStore": "qdrant",
   "qdrantUrl": "http://localhost:6333",
   "qdrantCollection": "alsania-mem",
-
   "graphStore": "memory",
-
-  "snapshotStore": "filesystem",
-  "snapshotPath": "./storage/snapshots",
-
   "memoryGateEnabled": true,
   "memoryGateThreshold": 0.3,
-
-  "maxMemoryEntries": 10000,
-  "similarityThreshold": 0.3,
-  "logLevel": "info",
-
-  // Fallback removed to force openrouter usage
+  "logLevel": "info"
 }

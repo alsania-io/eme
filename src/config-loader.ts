@@ -212,7 +212,7 @@ function loadFromFile(filePath: string): Partial<Config> {
 
 export function createNyxConfig(config: Config): any {
   const args: string[] = [
-    "/home/sigma/Desktop/echo-lab/memory-engine/dist/mcp-server.js",
+    "/home/sigma/Desktop/echo-lab/eme/dist/mcp-server.js",
   ];
 
   // Add vector store args
@@ -282,7 +282,7 @@ export function createNyxConfig(config: Config): any {
             OPENROUTER_TITLE: config.openRouterTitle,
           }),
         },
-        description: "Alsania Echo Memory Engine - Configurable memory system",
+        description: "Alsania's' E.M.E. - Configurable memory system",
       },
     },
   };
