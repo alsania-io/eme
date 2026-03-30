@@ -1,0 +1,16 @@
+{
+  "embeddingModel": "local",
+  "embeddingDimension": 384,
+  "vectorStore": "qdrant",
+  "qdrantUrl": "http://localhost:6333",
+  "qdrantCollection": "eme_vectors",
+  "graphStore": "jsonl",
+  "graphStorePath": "/home/sigma/Desktop/echo-lab/eme/storage/graph.jsonl",
+  "snapshotStore": "filesystem",
+  "snapshotPath": "/home/sigma/Desktop/echo-lab/eme/storage/snapshots",
+  "memoryGateEnabled": true,
+  "memoryGateThreshold": 0.3,
+  "maxMemoryEntries": 10000,
+  "similarityThreshold": 0.3,
+  "logLevel": "info"
+}

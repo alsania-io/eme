@@ -1,8 +1,9 @@
-# Source files (users will use compiled JavaScript)
-src/
+# .npmignore — EME Project
 
-# TypeScript configuration and outputs
+# Source files
+src/
 tsconfig.json
+tsconfig.eslint.json
 *.tsbuildinfo
 
 # Test files
@@ -10,6 +11,7 @@ tests/
 
 # Documentation
 docs/
+STARTUP_GUIDE.md
 
 # Logs and temporary files
 logs/
@@ -19,51 +21,44 @@ logs/
 storage/
 *.db
 *.db-*
-*.pid
 
 # Environment files
 .env
 .env.*
 
-# Deprecated files/folders (archived but kept for reference)
+# Deprecated files
 .deprecated/
 
-# Deployment and development scripts
-*.sh
+# Deployment scripts
+scripts/
 Containerfile
 podman-compose.yaml
 
-# IDE and editor files
+# IDE files
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS generated files
+# OS files
 .DS_Store
 Thumbs.db
 
 # Backup files
 *.bak
 *.backup
-*~
 
-# Python files (from engine directory)
-engine/
-*.py
-__pycache__/
+# Config files
+mcp-config.json
+eslint.config.ts
+eslint.config.js
+storage/config-*.json
 
-# Git files
+# Git
 .git/
 .github/
 .gitignore
 
-# Configuration examples (except package.json)
-storage/config-*.json
-mcp-config.json
-
-# Source maps (optional - include if you want debugging)
+# Map files
 *.map
-eme-nyx-wrapper.js
-STARTUP_GUIDE.md
-eslint.config.js
+
+# Data files
+data/

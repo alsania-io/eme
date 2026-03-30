@@ -196,7 +196,7 @@ export interface IPFSConfig {
 
 export interface Config {
   // Embedding configuration
-  embeddingModel: "local" | "openai" | "cohere" | "huggingface";
+  embeddingModel: "local" | "openai" | "cohere" | "huggingface" | "openrouter";
   embeddingModelPath?: string;
   embeddingDimension: number;
 
@@ -212,6 +212,7 @@ export interface Config {
   postgresConnection?: string;
   qdrantUrl?: string;
   qdrantCollection?: string;
+  qdrantVectorName?: string; // Named vector for multivector collections (default: uses single vector)
 
   // Graph store configuration
   graphStore: "sqlite" | "jsonl" | "memory";

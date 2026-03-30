@@ -7,10 +7,9 @@ import {
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { createMemoryManager, MemoryManager } from "./memory-manager.js";
-import type { Config, SearchResult } from "./types.js";
+import type { Config } from "./types.js";
 import { LocalRAG } from "./local-rag.js";
 import { LargeFileHandler } from "./large-file.js";
-import { randomUUID } from "crypto";
 
 // Schema definitions with proper validation
 const AddMemorySchema = z.object({
@@ -259,6 +258,26 @@ export class EMEMCPServer {
   private largeFileHandler: LargeFileHandler | null = null;
   private config: Config;
 
+  // Keys that require full reinitialize when changed
+  private static readonly REINIT_KEYS = new Set([
+    'embeddingModel', 'embeddingModelPath', 'embeddingDimension',
+    'vectorStore', 'vectorStorePath', 'qdrantUrl', 'qdrantCollection', 'qdrantVectorName',
+    'graphStore', 'graphStorePath',
+    'snapshotStore', 'snapshotPath',
+  ]);
+
+  // Keys that should never be exposed via get_config
+  private static readonly SECRET_KEYS = new Set([
+    'encryptionKey', 'openRouterApiKey',
+  ]);
+
+  // Keys that are safe to update at runtime without reinit
+  private static readonly RUNTIME_SAFE_KEYS = new Set([
+    'memoryGateEnabled', 'memoryGateThreshold',
+    'maxMemoryEntries', 'similarityThreshold', 'logLevel',
+    'openRouterReferer', 'openRouterTitle',
+  ]);
+
   constructor(config: Config) {
     this.config = config;
     this.server = new Server(
@@ -325,21 +344,23 @@ export class EMEMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      if (!this.memoryManager) {
-        throw new Error("Memory manager not initialized");
-      }
+      try {
+        if (!this.memoryManager) {
+          throw new Error("Memory manager not initialized");
+        }
 
-      if (!this.localRAG && this.memoryManager) {
-        // Initialize localRAG with the vector store from memoryManager
-        const vectorStore = this.memoryManager.getVectorStore();
-        this.localRAG = new LocalRAG(vectorStore);
-      }
+        if (!this.localRAG && this.memoryManager) {
+          // Initialize localRAG with the vector store and embedding function from memoryManager
+          const vectorStore = this.memoryManager.getVectorStore();
+          const embedFn = (text: string) => this.memoryManager!.embed(text);
+          this.localRAG = new LocalRAG(vectorStore, embedFn);
+        }
 
-      if (!this.largeFileHandler) {
-        this.largeFileHandler = new LargeFileHandler();
-      }
+        if (!this.largeFileHandler) {
+          this.largeFileHandler = new LargeFileHandler();
+        }
 
-      switch (name) {
+        switch (name) {
         // EME Core Memory Cases
         case "add_memory": {
           const { text, agentId, namespace, tags, visibility } = AddMemorySchema.parse(args);
@@ -414,13 +435,63 @@ export class EMEMCPServer {
         }
         
         case "get_config": {
-          return { content: [{ type: "text", text: JSON.stringify(this.config, null, 2) }] };
+          // Strip secrets before returning config
+          const safeConfig = { ...this.config } as Record<string, any>;
+          for (const key of EMEMCPServer.SECRET_KEYS) {
+            if (safeConfig[key]) {
+              safeConfig[key] = '***REDACTED***';
+            }
+          }
+          return { content: [{ type: "text", text: JSON.stringify(safeConfig, null, 2) }] };
         }
         
         case "update_config": {
           const { key, value } = UpdateConfigSchema.parse(args);
-          (this.config as any)[key] = value;
-          return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
+
+          // Validate key exists on Config type
+          if (!(key in this.config)) {
+            throw new Error(`Unknown config key: "${key}". Valid keys: ${Object.keys(this.config).join(', ')}`);
+          }
+
+          // Block secret key modification via update_config
+          if (EMEMCPServer.SECRET_KEYS.has(key)) {
+            throw new Error(`Cannot modify "${key}" via update_config for security reasons. Use environment variables.`);
+          }
+
+          // Type coercion for known numeric fields
+          let coercedValue: any = value;
+          if (['embeddingDimension', 'maxMemoryEntries'].includes(key)) {
+            coercedValue = Number(value);
+            if (isNaN(coercedValue)) throw new Error(`${key} must be a number`);
+          } else if (['similarityThreshold', 'memoryGateThreshold'].includes(key)) {
+            coercedValue = Number(value);
+            if (isNaN(coercedValue)) throw new Error(`${key} must be a number`);
+          }
+
+          // Apply the change
+          (this.config as any)[key] = coercedValue;
+
+          // If this key affects core subsystems, reinitialize
+          if (EMEMCPServer.REINIT_KEYS.has(key) && this.memoryManager) {
+            console.error(`[EME-MCP] Config key "${key}" requires reinitialize. Rebuilding subsystems...`);
+            // Reset lazy-init caches
+            this.localRAG = null;
+            this.largeFileHandler = null;
+            await this.memoryManager.reinitialize(this.config);
+            console.error('[EME-MCP] Reinitialize complete.');
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                key,
+                value: EMEMCPServer.SECRET_KEYS.has(key) ? '***REDACTED***' : coercedValue,
+                reinitialized: EMEMCPServer.REINIT_KEYS.has(key),
+              }),
+            }],
+          };
         }
         
         case "create_entities": {
@@ -559,6 +630,18 @@ export class EMEMCPServer {
         
         default:
           throw new Error(`Unknown tool: ${name}`);
+        }
+      } catch (error: any) {
+        // Provide user-friendly error messages
+        const message = error?.message || String(error);
+        console.error(`[EME-MCP] Tool "${name}" error:`, message);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: message, tool: name }),
+          }],
+          isError: true,
+        };
       }
     });
   }

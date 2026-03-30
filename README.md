@@ -1,203 +1,224 @@
-# @alsania-io/eme - Echo Memory Engine
+# @alsania-io/eme — Echo Memory Engine
 
-**Sovereign Memory System for AI Agents** - Local, Encrypted, Multi-Agent Memory with MCP Protocol Support
+**Sovereign Memory System for AI Agents** — Local, Encrypted, Multi-Agent Memory with MCP Protocol Support
 
 [![npm version](https://img.shields.io/npm/v/@alsania-io/eme.svg)](https://www.npmjs.com/package/@alsania-io/eme)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-blue)](https://spec.modelcontextprotocol.io/)
 
-## 🎯 What is EME?
+## What is EME?
 
 Echo Memory Engine (EME) is a sovereign memory system for AI agents that provides:
 
-- **Local & Encrypted**: Your memory stays on your machine, encrypted at rest
+- **Local & Encrypted**: Memory stays on your machine, encrypted at rest
 - **MCP Protocol Native**: Fully compatible with Model Context Protocol
 - **Multi-Agent Support**: Isolated namespaces for different agents
-- **Semantic Search**: Vector-based memory retrieval with SQLite backend
+- **Semantic Search**: Vector-based memory retrieval with SQLite or Qdrant backend
 - **Knowledge Graph**: Relationship tracking between memories
 - **Memory Gate**: Noise filtering to prevent memory bloat
+- **Configurable Embeddings**: Switch between embedding models and dimensions at runtime
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
 ```bash
 npm install @alsania-io/eme
-# or
-yarn add @alsania-io/eme
-# or
-pnpm add @alsania-io/eme
 ```
 
 ### Start the MCP Server
 
 ```bash
 # Start EME as an MCP server
-npx eme start
+npx eme server
 
-# Or with specific configuration
-npx eme start --port 3636 --maxMemoryEntries 10000
+# Or with custom configuration
+npx eme server --embeddingDimension 768 --logLevel debug
 ```
 
 ### Use in Your Code
 
 ```javascript
-import { MemoryEngine } from '@alsania-io/eme';
+import { createMemoryManager } from '@alsania-io/eme';
 
-// Initialize the memory engine
-const memory = new MemoryEngine({
-  vectorStorePath: './storage/vectors.db',
-  graphStorePath: './storage/graph.jsonl',
-  snapshotPath: './storage/snapshots'
+// Create memory manager
+const mm = await createMemoryManager({
+  embeddingModel: 'local',
+  embeddingDimension: 384,
+  vectorStore: 'memory',    // or 'sqlite', 'qdrant'
+  graphStore: 'memory',
+  snapshotStore: 'filesystem',
+  snapshotPath: './storage/snapshots',
+  memoryGateEnabled: false,
+  memoryGateThreshold: 0.3,
+  maxMemoryEntries: 10000,
+  similarityThreshold: 0.1,
+  logLevel: 'info',
 });
 
-await memory.initialize();
-
 // Add a memory
-const result = await memory.addMemory(
+const id = await mm.addMemory(
   'User prefers dark mode and uses a mechanical keyboard',
   'assistant-1',
-  'user-preferences'
+  'user-preferences',
+  [],
+  'shared'
 );
 
 // Search memories
-const memories = await memory.search(
+const results = await mm.searchMemories(
   'What keyboard does the user have?',
-  5, // limit
-  'user-preferences' // namespace (optional)
+  5,           // limit
+  'user-preferences'  // namespace (optional)
 );
 ```
 
-## 📖 Documentation
+## MCP Tools
 
-### MCP Tools
+EME exposes these tools via the Model Context Protocol:
 
-EME provides the following MCP tools:
+### Core Memory
+| Tool | Description |
+|------|-------------|
+| `add_memory` | Store a new memory with embedding |
+| `search_memories` | Semantic search across memories |
+| `get_memory` | Retrieve a memory by ID |
+| `update_memory` | Update an existing memory |
+| `delete_memory` | Delete a memory by ID |
 
-- `add_memory` - Add a new memory entry
-- `search_memory` - Search memories using semantic and graph search
-- `update_memory` - Update an existing memory entry
-- `delete_memory` - Delete a memory entry (soft delete)
-- `list_memories` - List memories with optional filtering
-- `graph_add_node` - Add a node to the knowledge graph
-- `graph_add_edge` - Add an edge between graph nodes
-- `snapshot_save` - Create a memory snapshot
-- `snapshot_load` - Load a memory snapshot
-- `graph_read` - Read entire graph structure with nodes and edges
-- `batch_add_memories` - Add multiple memories at once
-- `clear_namespace` - Clear all nodes and edges in a namespace
+### Knowledge Graph
+| Tool | Description |
+|------|-------------|
+| `create_entities` | Create entities in the knowledge graph |
+| `create_relations` | Create relationships between entities |
+| `add_observations` | Add observations to existing entities |
+| `delete_entities` | Remove entities from the graph |
+| `delete_relations` | Remove relationships |
+| `delete_observations` | Remove specific observations |
+| `read_graph` | Get the full knowledge graph |
+| `search_nodes` | Search graph nodes by text |
+| `open_nodes` | Retrieve specific nodes by name |
+| `get_graph` | Get complete graph with stats |
+| `get_graph_stats` | Get graph statistics |
+
+### Snapshots
+| Tool | Description |
+|------|-------------|
+| `create_snapshot` | Snapshot current state |
+| `list_snapshots` | List available snapshots |
+| `load_snapshot` | Restore from snapshot |
+| `delete_snapshot` | Remove a snapshot |
 
 ### Configuration
+| Tool | Description |
+|------|-------------|
+| `get_config` | Get current config (secrets redacted) |
+| `update_config` | Update a config value at runtime |
 
-EME can be configured via constructor options or environment variables:
+### Local RAG
+| Tool | Description |
+|------|-------------|
+| `query_documents` | Search ingested documents |
+| `ingest_file` | Ingest a file for RAG |
+| `ingest_data` | Ingest raw text content |
+| `delete_file` | Remove an ingested file |
+| `list_files` | List ingested files |
+| `local_rag_status` | Get RAG system status |
 
-```javascript
-const config = {
-  // Embedding configuration
-  embeddingModel: 'local',           // or 'openai', 'cohere', etc.
-  embeddingDimension: 384,           // BGE-small dimension
-  
-  // Storage configuration
-  vectorStore: 'sqlite',             // or 'postgres', 'memory'
-  vectorStorePath: './storage/vectors.db',
-  graphStore: 'jsonl',               // or 'neo4j', 'memory'
-  graphStorePath: './storage/graph.jsonl',
-  snapshotStore: 'filesystem',       // or 's3', 'ipfs'
-  snapshotPath: './storage/snapshots',
-  
-  // Memory gate configuration
-  memoryGateEnabled: true,
-  memoryGateThreshold: 0.3,
-  
-  // General configuration
-  maxMemoryEntries: 10000,
-  similarityThreshold: 0.3,
-  logLevel: 'info'                   // 'debug', 'info', 'warn', 'error'
-};
-```
+### Large File Handling
+| Tool | Description |
+|------|-------------|
+| `read_large_file_chunk` | Read a chunk of a large file |
+| `search_in_large_file` | Search within a large file |
+| `get_file_structure` | Analyze file structure |
+| `navigate_to_line` | Jump to a specific line |
+| `get_file_summary` | Get file statistics |
+| `stream_large_file` | Stream file in chunks |
 
-### CLI Usage
+## Configuration
+
+EME can be configured via:
+1. **Environment variables** (highest priority)
+2. **Config file** (`eme-config.json`)
+3. **CLI flags**
+4. **Defaults** (lowest priority)
+
+### Embedding Models
 
 ```bash
-# Start MCP server
-npx eme start
+# Use local embedding (default, 384 dimensions)
+EMBEDDING_MODEL=local EMBEDDING_DIMENSION=384
 
-# Start with specific port
-npx eme start --port 3636
-
-# Show configuration
-npx eme config
-
-# Show version
-npx eme version
-
-# Run tests
-npx eme test
-
-# Get help
-npx eme help
+# Use OpenRouter (requires API key, 2048 dimensions for Llama Nemotron)
+EMBEDDING_MODEL=openrouter \
+  EMBEDDING_MODEL_PATH=nvidia/llama-nemotron-embed-vl-1b-v2:free \
+  EMBEDDING_DIMENSION=2048 \
+  OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
-## 🔧 Architecture
+You can switch embedding models at runtime via the `update_config` MCP tool. The system will reinitialize all subsystems with the new configuration.
 
-EME is built with a modular architecture:
+### Vector Stores
+
+| Store | Description | Default |
+|-------|-------------|---------|
+| `memory` | In-memory, ephemeral | ✓ |
+| `sqlite` | SQLite with persistence | |
+| `qdrant` | Qdrant vector database | |
+
+### Environment Variables
+
+See `.env.example` for all available configuration options.
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────┐
 │                 MCP Interface               │
 ├─────────────────────────────────────────────┤
 │              Memory Manager                 │
+│         (Embedding + Gate + Graph)          │
 ├─────────────┬──────────────┬───────────────┤
 │ Vector Store│ Graph Store  │ Snapshot Store│
-│  (SQLite)   │   (JSONL)    │  (Filesystem) │
+│ (memory/    │ (memory/     │ (filesystem/  │
+│  sqlite/    │  sqlite)     │  ipfs)        │
+│  qdrant)    │              │               │
 └─────────────┴──────────────┴───────────────┘
-│              Memory Gate                    │
-│         (Noise Filtering)                   │
-└─────────────────────────────────────────────┘
 ```
 
-### Key Features
+## Build & Development
 
-1. **Vector Memory Store**: SQLite-based vector storage for semantic search
-2. **Knowledge Graph**: Track relationships between memories
-3. **Memory Gate**: Prevent memory bloat with relevance filtering
-4. **Snapshot System**: Version and export/import memory states
-5. **Multi-Namespace**: Isolate memories by agent or context
-6. **Encryption**: All data encrypted at rest with local keys
+```bash
+# Build
+make build
 
-## 🔐 Security & Privacy
+# Run tests
+make test
+
+# Start server
+make start
+
+# Development (watch mode)
+make dev
+
+# Security audit
+make audit
+
+# Build Podman container
+make container
+```
+
+## Security
 
 - **Local First**: All data stays on your machine
-- **Encryption**: Memories encrypted with AES-256
 - **No Telemetry**: No data leaves your system
+- **Secret Redaction**: `get_config` never exposes API keys
 - **Open Source**: MIT licensed, fully auditable
 
-## 🤝 Contributing
+## License
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `npm test`
-5. Submit a pull request
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built for the [Model Context Protocol](https://spec.modelcontextprotocol.io/) ecosystem
-- Inspired by the need for sovereign AI memory systems
-- Thanks to all contributors and the open source community
-
-## 📞 Support
-
-- [GitHub Issues](https://github.com/alsania-io/eme/issues) for bug reports and feature requests
-- [Documentation](https://github.com/alsania-io/eme#readme) for usage guides
-- [Discussions](https://github.com/alsania-io/eme/discussions) for questions and community support
+MIT License — see LICENSE file for details.
 
 ---
 
-**Made with ❤️ by [Alsania I/O](https://alsania.io) - Building sovereign AI infrastructure.**
+**Made by [Alsania I/O](https://alsania.io)** — Building sovereign AI infrastructure.

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { EmbeddingProvider, EmbeddingResult } from "./types.js";
+import { EmbeddingProvider } from "./types.js";
 
 export class OpenRouterEmbeddingProvider implements EmbeddingProvider {
   private client: OpenAI;
@@ -71,7 +71,8 @@ export class OpenRouterEmbeddingProvider implements EmbeddingProvider {
       return response.data[0].embedding;
     } catch (error) {
       console.error("[OpenRouter] Embedding error:", error);
-      throw new Error(`OpenRouter embedding failed: ${error.message}`);
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`OpenRouter embedding failed: ${msg}`);
     }
   }
 

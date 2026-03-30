@@ -13,17 +13,26 @@ import { IGraphStore, createGraphStore } from "./graph-store.js";
 import { createSnapshotStore, ISnapshotStore } from "./snapshot-store.js";
 import { randomUUID } from "crypto";
 
-// Simple local embedding model simulation
-// Remove duplicate import - already imported via openrouter
-import { EmbeddingProvider as IEmbeddingProvider } from './embeddings/types.js';
+import { EmbeddingProvider } from './embeddings/types.js';
+import { OpenRouterEmbeddingProvider } from './embeddings/openrouter.js';
 
-class LocalEmbeddingModel implements IEmbeddingProvider {
+/**
+ * Local embedding model — hash-based fallback.
+ * Dimension is configurable via constructor to match config.embeddingDimension.
+ */
+class LocalEmbeddingModel implements EmbeddingProvider {
+  private readonly dim: number;
+
+  constructor(dimension: number = 384) {
+    this.dim = dimension;
+  }
+
   async embed(text: string): Promise<number[]> {
     const words = text.toLowerCase().split(/\s+/);
-    const embedding = new Array(384).fill(0);
+    const embedding = new Array(this.dim).fill(0);
     words.forEach((word, idx) => {
       const hash = this.hashString(word);
-      const position = hash % embedding.length;
+      const position = hash % this.dim;
       embedding[position] += 1 / (idx + 1);
     });
 
@@ -39,7 +48,7 @@ class LocalEmbeddingModel implements IEmbeddingProvider {
   }
 
   getDimension(): number {
-    return 384;
+    return this.dim;
   }
 
   private hashString(str: string): number {
@@ -53,14 +62,9 @@ class LocalEmbeddingModel implements IEmbeddingProvider {
   }
 }
 
-import { OpenRouterEmbeddingProvider } from './embeddings/openrouter.js';
-
-interface EmbeddingProvider {
-  embed(text: string): Promise<number[]>;
-  embedBatch?(texts: string[]): Promise<number[][]>;
-  getDimension(): number;
-}
-
+/**
+ * EmbeddingModel wraps a primary provider with fallback and dimension validation.
+ */
 class EmbeddingModel {
   private provider: EmbeddingProvider;
   private config: Config;
@@ -68,22 +72,24 @@ class EmbeddingModel {
 
   constructor(config: Config) {
     this.config = config;
-    console.log('[EmbeddingModel] Config:', JSON.stringify({
-      model: config.embeddingModel,
-      dimension: config.embeddingDimension,
-      hasApiKey: !!config.openRouterApiKey,
-      modelPath: config.embeddingModelPath
-    }, null, 2));
-    this.fallbackProvider = new LocalEmbeddingModel();
+    this.fallbackProvider = new LocalEmbeddingModel(this.config.embeddingDimension);
     this.provider = this.createProvider();
-    console.log('[EmbeddingModel] Using provider type:', this.provider.constructor.name);
+  }
+
+  /**
+   * Recreate the provider from current config.
+   * Call this after config changes to swap embedding model at runtime.
+   */
+  reconfigure(config: Config): void {
+    this.config = config;
+    this.fallbackProvider = new LocalEmbeddingModel(this.config.embeddingDimension);
+    this.provider = this.createProvider();
   }
 
   private createProvider(): EmbeddingProvider {
     // Try to use configured provider
-    if (this.config.embeddingModel === ('openrouter' as any) && this.config.openRouterApiKey) {
+    if (this.config.embeddingModel === 'openrouter' && this.config.openRouterApiKey) {
       try {
-        console.log('[Embedding] Initializing OpenRouter provider');
         return new OpenRouterEmbeddingProvider({
           apiKey: this.config.openRouterApiKey,
           model: this.config.embeddingModelPath,
@@ -96,27 +102,35 @@ class EmbeddingModel {
         return this.fallbackProvider;
       }
     }
-    
+
     // Default to local
-    console.log('[Embedding] Using local embedding model');
     return this.fallbackProvider;
   }
 
   async embed(text: string): Promise<number[]> {
     try {
       const embedding = await this.provider.embed(text);
-      
+
       // Verify dimension matches config
       if (embedding.length !== this.config.embeddingDimension) {
         console.warn(`[Embedding] Dimension mismatch: got ${embedding.length}, expected ${this.config.embeddingDimension}`);
-        
+
         // Try fallback if configured
         if (this.config.fallbackEmbeddingModel === 'local' && this.provider !== this.fallbackProvider) {
           console.log('[Embedding] Falling back to local model');
           return this.fallbackProvider.embed(text);
         }
+
+        // Pad or truncate to match expected dimension
+        if (embedding.length < this.config.embeddingDimension) {
+          const padded = new Array(this.config.embeddingDimension).fill(0);
+          for (let i = 0; i < embedding.length; i++) padded[i] = embedding[i];
+          return padded;
+        } else {
+          return embedding.slice(0, this.config.embeddingDimension);
+        }
       }
-      
+
       return embedding;
     } catch (error) {
       console.error('[Embedding] Provider failed, using fallback:', error);
@@ -126,6 +140,11 @@ class EmbeddingModel {
 
   getDimension(): number {
     return this.config.embeddingDimension;
+  }
+
+  /** Returns true if the current provider is the local fallback */
+  isUsingFallback(): boolean {
+    return this.provider === this.fallbackProvider;
   }
 }
 
@@ -208,12 +227,18 @@ export interface MemoryManager {
 
   // Lifecycle
   close(): Promise<void>;
+
+  // Reconfiguration — allows swapping embedding model/dimension at runtime
+  reinitialize(config: Config): Promise<void>;
+
+  // Expose embedding for consumers like LocalRAG
+  embed(text: string): Promise<number[]>;
 }
 
 class MemoryManagerImpl implements MemoryManager {
-  private vectorStore: IVectorStore;
-  private graphStore: IGraphStore;
-  private snapshotStore: ISnapshotStore;
+  private vectorStore!: IVectorStore;
+  private graphStore!: IGraphStore;
+  private snapshotStore!: ISnapshotStore;
   private embeddingModel: EmbeddingModel;
   private config: Config;
   private initialized: boolean = false;
@@ -226,7 +251,7 @@ class MemoryManagerImpl implements MemoryManager {
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.vectorStore = await createVectorStore(this.config);
-    this.graphStore = createGraphStore();
+    this.graphStore = createGraphStore(this.config.graphStore === "memory");
     this.snapshotStore = await createSnapshotStore(this.config);
 
     if ("initialize" in this.graphStore) {
@@ -234,7 +259,36 @@ class MemoryManagerImpl implements MemoryManager {
     }
 
     this.initialized = true;
-    console.log("[MemoryManager] Initialized with all stores");
+  }
+
+  /**
+   * Reinitialize with a new config.
+   * Closes existing stores and recreates everything.
+   * WARNING: If embedding dimension changed, existing data may be incompatible.
+   */
+  async reinitialize(config: Config): Promise<void> {
+    const oldDimension = this.config.embeddingDimension;
+    const newDimension = config.embeddingDimension;
+    const dimensionChanged = oldDimension !== newDimension;
+
+    // Close existing stores
+    if (this.initialized) {
+      await this.close();
+    }
+
+    // Update config
+    this.config = config;
+    this.embeddingModel.reconfigure(config);
+
+    if (dimensionChanged) {
+      console.warn(
+        `[MemoryManager] Embedding dimension changed from ${oldDimension} to ${newDimension}. ` +
+        `Existing stored vectors may be incompatible. Consider clearing the vector store.`
+      );
+    }
+
+    // Reinitialize stores
+    await this.initialize();
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -505,8 +559,8 @@ class MemoryManagerImpl implements MemoryManager {
     await this.ensureInitialized();
     let deleted = 0;
 
+    const graph = await this.graphStore.getGraph();
     for (const name of entityNames) {
-      const graph = await this.graphStore.getGraph();
       const node = graph.nodes.find((n) => n.name === name);
       if (node) {
         await (this.graphStore as any).deleteNode(name);
@@ -552,9 +606,9 @@ class MemoryManagerImpl implements MemoryManager {
     await this.ensureInitialized();
     let deleted = 0;
 
+    const graph = await this.graphStore.getGraph();
     for (const relation of relations) {
       if (!relation.from || !relation.to) continue;
-      const graph = await this.graphStore.getGraph();
       const edge = graph.edges.find(
         (e) =>
           e.from === relation.from &&
@@ -642,6 +696,11 @@ class MemoryManagerImpl implements MemoryManager {
       await this.snapshotStore.close();
     }
     this.initialized = false;
+  }
+
+  /** Expose embedding computation for consumers like LocalRAG */
+  async embed(text: string): Promise<number[]> {
+    return this.embeddingModel.embed(text);
   }
 }
 

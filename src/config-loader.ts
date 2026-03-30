@@ -47,27 +47,64 @@ const minimalDefaults: Config = {
   logLevel: "info",
 };
 
-export function loadConfig(configPath?: string): Config {
-  let config: Partial<Config> = {};
+/**
+ * Validates a Config object and returns an array of warning messages.
+ */
+export function validateConfig(config: Config): string[] {
+  const warnings: string[] = [];
 
-  // 1. Load from environment variables first (highest priority)
-  config = { ...config, ...loadFromEnv() };
-
-  // 2. Load from specified config file if provided
-  if (configPath && fs.existsSync(configPath)) {
-    const fileConfig = loadFromFile(configPath);
-    config = { ...config, ...fileConfig };
+  if (config.embeddingDimension <= 0 || isNaN(config.embeddingDimension)) {
+    warnings.push(`Invalid embeddingDimension: ${config.embeddingDimension}. Must be a positive integer.`);
   }
 
-  // 3. Load from default config file in project root
+  const validModels = ["local", "openai", "cohere", "huggingface", "openrouter"];
+  if (!validModels.includes(config.embeddingModel)) {
+    warnings.push(`Unknown embeddingModel: "${config.embeddingModel}". Valid: ${validModels.join(", ")}`);
+  }
+
+  if (config.embeddingModel === "openrouter" && !config.openRouterApiKey) {
+    warnings.push('embeddingModel is "openrouter" but no openRouterApiKey provided. Will fall back to local.');
+  }
+
+  if (config.similarityThreshold < 0 || config.similarityThreshold > 1) {
+    warnings.push(`similarityThreshold ${config.similarityThreshold} is outside [0, 1] range.`);
+  }
+
+  if (config.memoryGateThreshold < 0 || config.memoryGateThreshold > 1) {
+    warnings.push(`memoryGateThreshold ${config.memoryGateThreshold} is outside [0, 1] range.`);
+  }
+
+  return warnings;
+}
+
+export function loadConfig(configPath?: string): Config {
+  // Priority: defaults < default file < explicit file < env vars
+  // Env vars have HIGHEST priority (last spread wins)
+  let config: Partial<Config> = { ...minimalDefaults };
+
+  // 1. Load from default config file in project root
   const defaultConfigPath = path.join(process.cwd(), "eme-config.json");
   if (fs.existsSync(defaultConfigPath)) {
     const fileConfig = loadFromFile(defaultConfigPath);
     config = { ...config, ...fileConfig };
   }
 
-  // 4. Merge with minimal defaults (lowest priority)
-  return { ...minimalDefaults, ...config };
+  // 2. Load from specified config file if provided (overrides default file)
+  if (configPath && fs.existsSync(configPath)) {
+    const fileConfig = loadFromFile(configPath);
+    config = { ...config, ...fileConfig };
+  }
+
+  // 3. Environment variables have HIGHEST priority
+  config = { ...config, ...loadFromEnv() };
+
+  // Validate and warn
+  const warnings = validateConfig(config as Config);
+  for (const w of warnings) {
+    console.warn(`[Config] ${w}`);
+  }
+
+  return config as Config;
 }
 
 /**
@@ -110,7 +147,12 @@ function loadFromEnv(): Partial<Config> {
     config.embeddingModelPath = process.env.EMBEDDING_MODEL_PATH;
   }
   if (process.env.EMBEDDING_DIMENSION) {
-    config.embeddingDimension = parseInt(process.env.EMBEDDING_DIMENSION, 10);
+    const parsed = parseInt(process.env.EMBEDDING_DIMENSION, 10);
+    if (!isNaN(parsed)) {
+      config.embeddingDimension = parsed;
+    } else {
+      console.warn(`[Config] Invalid EMBEDDING_DIMENSION: "${process.env.EMBEDDING_DIMENSION}"`);
+    }
   }
 
   // OpenRouter specific
@@ -130,10 +172,10 @@ function loadFromEnv(): Partial<Config> {
       .FALLBACK_EMBEDDING_MODEL as Config["embeddingModel"];
   }
   if (process.env.FALLBACK_EMBEDDING_DIMENSION) {
-    config.fallbackEmbeddingDimension = parseInt(
-      process.env.FALLBACK_EMBEDDING_DIMENSION,
-      10,
-    );
+    const parsed = parseInt(process.env.FALLBACK_EMBEDDING_DIMENSION, 10);
+    if (!isNaN(parsed)) {
+      config.fallbackEmbeddingDimension = parsed;
+    }
   }
 
   // Vector store configuration
@@ -176,7 +218,10 @@ function loadFromEnv(): Partial<Config> {
       process.env.MEMORY_GATE_ENABLED.toLowerCase() === "true";
   }
   if (process.env.MEMORY_GATE_THRESHOLD) {
-    config.memoryGateThreshold = parseFloat(process.env.MEMORY_GATE_THRESHOLD);
+    const parsed = parseFloat(process.env.MEMORY_GATE_THRESHOLD);
+    if (!isNaN(parsed)) {
+      config.memoryGateThreshold = parsed;
+    }
   }
 
   // Security
@@ -186,10 +231,16 @@ function loadFromEnv(): Partial<Config> {
 
   // General configuration
   if (process.env.MAX_MEMORY_ENTRIES) {
-    config.maxMemoryEntries = parseInt(process.env.MAX_MEMORY_ENTRIES, 10);
+    const parsed = parseInt(process.env.MAX_MEMORY_ENTRIES, 10);
+    if (!isNaN(parsed)) {
+      config.maxMemoryEntries = parsed;
+    }
   }
   if (process.env.SIMILARITY_THRESHOLD) {
-    config.similarityThreshold = parseFloat(process.env.SIMILARITY_THRESHOLD);
+    const parsed = parseFloat(process.env.SIMILARITY_THRESHOLD);
+    if (!isNaN(parsed)) {
+      config.similarityThreshold = parsed;
+    }
   }
   if (process.env.LOG_LEVEL) {
     config.logLevel = process.env.LOG_LEVEL as Config["logLevel"];
@@ -212,7 +263,7 @@ function loadFromFile(filePath: string): Partial<Config> {
 
 export function createNyxConfig(config: Config): any {
   const args: string[] = [
-    "/home/sigma/Desktop/echo-lab/eme/dist/mcp-server.js",
+    path.join(__dirname, "mcp-server.js"),
   ];
 
   // Add vector store args
@@ -282,7 +333,7 @@ export function createNyxConfig(config: Config): any {
             OPENROUTER_TITLE: config.openRouterTitle,
           }),
         },
-        description: "Alsania's' E.M.E. - Configurable memory system",
+        description: "Alsania's E.M.E. - Configurable memory system",
       },
     },
   };

@@ -9,8 +9,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install all dependencies (need devDeps for TypeScript build)
+RUN npm ci
 
 # Copy source code
 COPY src/ ./src/
@@ -31,7 +31,6 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --chown=nodejs:nodejs package.json ./
-COPY --chown=nodejs:nodejs config-example.json ./
 
 # Create directories with correct permissions
 RUN mkdir -p ./storage ./logs && \
@@ -48,4 +47,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:8048/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
 # Start EME MCP server with stdio transport
-CMD ["node", "dist/mcp-server.js"]
+CMD ["node", "dist/index.js", "server"]

@@ -182,6 +182,14 @@ export class SQLiteVectorStore implements IVectorStore {
   ): Promise<string> {
     if (!this.db) throw new Error("Database not initialized");
 
+    // Validate embedding dimension matches config
+    if (entry.embedding.length > 0 && entry.embedding.length !== this.config.embeddingDimension) {
+      throw new Error(
+        `[SQLite] Embedding dimension mismatch: got ${entry.embedding.length}, expected ${this.config.embeddingDimension}. ` +
+        `Set EMBEDDING_DIMENSION to match your embedding model output.`
+      );
+    }
+
     const id = randomUUID();
     const now = new Date().toISOString();
     const embeddingBuffer = Buffer.from(
@@ -471,14 +479,19 @@ export class QdrantVectorStore implements IVectorStore {
   private collectionName: string;
   private embeddingDimension: number;
   private similarityThreshold: number;
+  private vectorName: string;
 
   constructor(config: Config) {
     this.collectionName = config.qdrantCollection || "alsania-mem";
     this.embeddingDimension = config.embeddingDimension || 1536;
     this.similarityThreshold = config.similarityThreshold || 0.3;
+    this.vectorName = config.qdrantVectorName || "";
 
     const qdrantUrl = config.qdrantUrl || "http://localhost:6333";
     this.client = new QdrantClient({ url: qdrantUrl });
+    if (this.vectorName) {
+      console.log(`[Qdrant] Using named vector: ${this.vectorName}`);
+    }
   }
 
   async initialize(): Promise<void> {
@@ -489,13 +502,44 @@ export class QdrantVectorStore implements IVectorStore {
       );
 
       if (!exists) {
+        // Create collection with proper vector config (named or unnamed)
+        const vectorConfig: any = this.vectorName
+          ? { [this.vectorName]: { size: this.embeddingDimension, distance: "Cosine" } }
+          : { size: this.embeddingDimension, distance: "Cosine" };
+
         await this.client.createCollection(this.collectionName, {
-          vectors: {
-            size: this.embeddingDimension,
-            distance: "Cosine",
-          },
+          vectors: vectorConfig,
         });
-        console.log(`[Qdrant] Created collection: ${this.collectionName}`);
+        console.log(
+          `[Qdrant] Created collection: ${this.collectionName} ` +
+          `(dimension: ${this.embeddingDimension}${this.vectorName ? `, named: ${this.vectorName}` : ''})`
+        );
+      } else {
+        // Verify existing collection dimensions match config
+        try {
+          const info = await this.client.getCollection(this.collectionName);
+          const collectionVectors = info.config?.params?.vectors;
+          if (collectionVectors) {
+            let existingSize: number | undefined;
+            if (typeof collectionVectors === 'object' && 'size' in collectionVectors) {
+              // Unnamed vector
+              existingSize = collectionVectors.size as number;
+            } else if (this.vectorName && typeof collectionVectors === 'object' && this.vectorName in collectionVectors) {
+              // Named vector
+              existingSize = (collectionVectors as any)[this.vectorName]?.size;
+            }
+
+            if (existingSize && existingSize !== this.embeddingDimension) {
+              console.warn(
+                `[Qdrant] WARNING: Collection "${this.collectionName}" has dimension ${existingSize} ` +
+                `but config specifies ${this.embeddingDimension}. ` +
+                `New inserts may fail. Consider clearing the collection or updating EMBEDDING_DIMENSION.`
+              );
+            }
+          }
+        } catch (checkError) {
+          console.warn('[Qdrant] Could not verify collection dimensions:', checkError);
+        }
       }
 
       console.log(`[Qdrant] Connected to collection: ${this.collectionName}`);
@@ -511,13 +555,32 @@ export class QdrantVectorStore implements IVectorStore {
     const id = randomUUID();
     const now = new Date().toISOString();
 
+    // Validate embedding dimension matches expected
+    if (entry.embedding.length > 0 && entry.embedding.length !== this.embeddingDimension) {
+      throw new Error(
+        `[Qdrant] Embedding dimension mismatch: got ${entry.embedding.length}, expected ${this.embeddingDimension}. ` +
+        `Set EMBEDDING_DIMENSION to match your embedding model output.`
+      );
+    }
+
     try {
+      // Prepare vector based on whether we're using named vectors
+      let vector: any;
+      if (this.vectorName) {
+        // Named vector - Qdrant expects an object with vector names as keys
+        vector = { [this.vectorName]: entry.embedding };
+      } else {
+        // Single vector - use array directly
+        vector = entry.embedding;
+      }
+
+      // @ts-ignore - Qdrant accepts named vectors in object format
       await this.client.upsert(this.collectionName, {
         wait: true,
         points: [
           {
             id,
-            vector: entry.embedding,
+            vector,
             payload: {
               text: entry.text,
               agentId: entry.metadata.agentId,
@@ -591,11 +654,17 @@ export class QdrantVectorStore implements IVectorStore {
           }
         : undefined;
 
+      // Prepare search vector based on whether we're using named vectors
+      const searchVector: any = this.vectorName
+        ? { [this.vectorName]: queryEmbedding }
+        : queryEmbedding;
+
       const results = await this.client.search(this.collectionName, {
-        vector: queryEmbedding,
+        vector: searchVector,
         limit: limit * 2,
         filter,
         with_payload: true,
+        with_vector: true,
       });
 
       const memories = results
@@ -603,10 +672,26 @@ export class QdrantVectorStore implements IVectorStore {
         .slice(0, limit)
         .map((r: any) => {
           const payload = r.payload || {};
+
+          // Unwrap stored embedding (handles both named and unnamed vectors)
+          let storedEmbedding: number[] = [];
+          if (r.vector) {
+            if (Array.isArray(r.vector)) {
+              storedEmbedding = r.vector;
+            } else if (typeof r.vector === 'object') {
+              if (this.vectorName && this.vectorName in r.vector) {
+                storedEmbedding = r.vector[this.vectorName];
+              } else {
+                const firstKey = Object.keys(r.vector)[0];
+                if (firstKey) storedEmbedding = r.vector[firstKey];
+              }
+            }
+          }
+
           const entry: MemoryEntry = {
             id: r.id as string,
             text: payload.text as string,
-            embedding: queryEmbedding,
+            embedding: storedEmbedding,
             metadata: {
               agentId: payload.agentId as string,
               namespace: payload.namespace as string,
@@ -645,10 +730,29 @@ export class QdrantVectorStore implements IVectorStore {
       const point = result[0];
       const payload = point.payload || {};
 
+      // Unwrap named vectors properly
+      let embedding: number[] = [];
+      if (point.vector) {
+        if (Array.isArray(point.vector)) {
+          embedding = point.vector as number[];
+        } else if (typeof point.vector === 'object') {
+          // Named vector: { "v2048": [...], ... }
+          if (this.vectorName && this.vectorName in point.vector) {
+            embedding = (point.vector as any)[this.vectorName];
+          } else {
+            // Take first named vector if our name isn't found
+            const firstKey = Object.keys(point.vector)[0];
+            if (firstKey) {
+              embedding = (point.vector as any)[firstKey];
+            }
+          }
+        }
+      }
+
       return {
         id: point.id as string,
         text: payload.text as string,
-        embedding: (point.vector as number[]) || [],
+        embedding,
         metadata: {
           agentId: payload.agentId as string,
           namespace: payload.namespace as string,
@@ -690,12 +794,17 @@ export class QdrantVectorStore implements IVectorStore {
 
       const vector = updates.embedding ?? existing.embedding;
 
+      // Wrap vector in named format if using named vectors
+      const upsertVector: any = this.vectorName
+        ? { [this.vectorName]: vector }
+        : vector;
+
       await this.client.upsert(this.collectionName, {
         wait: true,
         points: [
           {
             id,
-            vector,
+            vector: upsertVector,
             payload: updatedPayload,
           },
         ],
@@ -804,7 +913,12 @@ export class InMemoryVectorStore implements IVectorStore {
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) return 0;
+    if (a.length !== b.length) {
+      throw new Error(
+        `[Memory] Vector dimension mismatch: query=${a.length}, stored=${b.length}. ` +
+        `This usually means the embedding model changed. Clear the vector store or re-embed.`
+      );
+    }
 
     let dotProduct = 0;
     let normA = 0;

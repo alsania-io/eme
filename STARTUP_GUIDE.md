@@ -1,124 +1,125 @@
-# EME (Echo Memory Engine) - PROFESSIONAL STARTUP GUIDE
+# EME (Echo Memory Engine) — Startup Guide
 
-**Professional architecture. Single entry point. Monetization ready.**
-
-## 🚀 PROFESSIONAL STARTUP OPTIONS
+## Quick Start
 
 ```bash
-# OPTION 1: Production start (standard)
+# Build the project
+make build
+
+# Start the MCP server
+make start
+
+# Or directly
+node dist/index.js server
+```
+
+## Starting EME
+
+```bash
+# Standard start
 npm start
 
-# OPTION 2: Clean start (no warnings)
+# Clean start (no Node warnings)
 npm run start:clean
 
-# OPTION 3: Nyx-optimized start
-npm run start:nyx
-
-# OPTION 4: Direct CLI (full control)
-node dist/index.js server
-
-# OPTION 5: With custom config
-node dist/index.js server --maxMemoryEntries 5000 --logLevel debug
+# With custom options
+node dist/index.js server --embeddingDimension 768 --logLevel debug
 ```
 
-## 📦 WHAT EACH OPTION DOES
+## Verifying EME Is Running
 
-- **`npm start`** → Starts the MCP server (stdout may show warnings but works)
-- **`npm run start:clean`** → Starts with `--no-warnings` flag (clean output)
-- **`npm run start:nyx`** → Optimized for Nyx MCP (no warnings + experimental flag)
-- **Direct command** → The raw command that always works
-
-## ✅ VERIFICATION (Is EME Running?)
+EME communicates over stdio (MCP protocol). To verify it works:
 
 ```bash
-# Run the simple test
-npm run test:simple
+# Build and run tests
+make test
 
-# Or run the practical verification
-npm run verify
+# Or run the integration test directly
+node -e "
+const { createMemoryManager } = require('./dist/memory-manager.js');
+(async () => {
+  const mm = await createMemoryManager({
+    embeddingModel: 'local', embeddingDimension: 384,
+    vectorStore: 'memory', graphStore: 'memory',
+    snapshotStore: 'filesystem', snapshotPath: './storage/snapshots',
+    memoryGateEnabled: false, memoryGateThreshold: 0.3,
+    maxMemoryEntries: 10000, similarityThreshold: 0.1, logLevel: 'error',
+  });
+  const id = await mm.addMemory('test', 'me', 'default', [], 'shared');
+  const results = await mm.searchMemories('test', 5);
+  console.log('EME OK — stored:', id, 'found:', results.length, 'results');
+  await mm.close();
+})();
+"
 ```
 
-**Expected Output:** "EME server started, would test tools here..."
+## Available MCP Tools
 
-## 🛠️ AVAILABLE TOOLS (When Connected via MCP)
+When connected via MCP, these tools are available:
 
-- `memory.add` - Add memories with filtering
-- `memory.search` - Semantic + graph search
-- `memory.list` - List memories in namespace
-- `memory.update` - Update existing memories
-- `memory.delete` - Delete memories
-- `memory.graph.*` - Graph operations
-- `memory.batch.*` - Batch operations
-- `memory.clear_namespace` - Clear namespace with safety check
+- `add_memory` — Store a new memory
+- `search_memories` — Semantic search
+- `get_memory` — Get memory by ID
+- `update_memory` — Update a memory
+- `delete_memory` — Delete a memory
+- `create_entities` / `create_relations` — Knowledge graph operations
+- `read_graph` / `search_nodes` / `open_nodes` — Graph queries
+- `create_snapshot` / `load_snapshot` — Snapshot management
+- `get_config` / `update_config` — Runtime configuration
+- `query_documents` / `ingest_file` / `ingest_data` — Local RAG
 
-## 🔧 TROUBLESHOOTING
+## Configuration
 
-### Problem: "Cannot find module" or import errors
-**Solution:** Use `npm run start:nyx` or the direct command with experimental flag
+Configure EME via:
+1. Environment variables (highest priority)
+2. Config file (`eme-config.json`)
+3. CLI flags
 
-### Problem: Warnings in console (ESM modules, etc.)
-**Solution:** Use `npm run start:clean` or direct command with `--no-warnings`
+See `.env.example` for all available options.
 
-### Problem: Nyx won't connect
-**Solution:** 
-1. Ensure you're using `npm run start:nyx`
-2. Check Nyx config points to stdio transport
-3. Verify EME process is running (`ps aux | grep mcp-server`)
+## Switching Embedding Models at Runtime
 
-## 📁 DIRECTORY STRUCTURE (Simplified)
+Use the `update_config` MCP tool:
+
+```json
+{
+  "key": "embeddingModel",
+  "value": "openrouter"
+}
+```
+
+This triggers a full reinitialize of all subsystems. Dimension changes also work:
+
+```json
+{
+  "key": "embeddingDimension",
+  "value": 2048
+}
+```
+
+## Troubleshooting
+
+### "Cannot find module" errors
+Run `make build` to compile TypeScript.
+
+### Port/transport issues
+EME uses stdio transport by default (MCP protocol). It doesn't bind to a port unless configured for HTTP.
+
+### Dimension mismatch errors
+If you change the embedding model, make sure `EMBEDDING_DIMENSION` matches the model's output dimension. Or clear the vector store first.
+
+## Directory Structure
 
 ```
 eme/
-├── dist/               # Compiled TypeScript
-│   ├── mcp-server.js   # ← THE ONE FILE THAT MATTERS
-│   └── index.js        # Library exports (not for starting)
-├── src/               # Source TypeScript
-├── storage/           # Database and logs
-├── tests/             # Test files
-├── package.json       # Fixed scripts ✓
-├── start-eme.sh       # Fixed startup script ✓
-├── STARTUP_GUIDE.md   # ← YOU ARE HERE
-└── config-sigma-optimized.json  # Performance-tuned config
+├── dist/               # Compiled output (built by `make build`)
+├── src/                # TypeScript source
+├── storage/            # Runtime data (databases, snapshots)
+├── tests/              # Test files
+├── .deprecated/        # Archived files
+├── Makefile            # Build commands
+├── MAKEFILE_README.md  # Makefile usage guide
+├── .env.example        # Environment config template
+├── Containerfile       # Podman container build
+└── README.md           # Main documentation
 ```
-
-## 🎯 QUICK START FOR SIGMA
-
-```bash
-# 1. Navigate to EME directory
-cd /home/sigma/Desktop/echo-lab/eme
-
-# 2. Start EME (Nyx optimized)
-npm run start:nyx
-
-# 3. Verify it's working (in another terminal)
-npm run test:simple
-
-# 4. Connect Nyx to stdio:///home/sigma/Desktop/echo-lab/eme/dist/mcp-server.js
-```
-
-## 📝 CONFIGURATION
-
-The system uses `config-sigma-optimized.json` by default (performance-tuned for your workflow).
-
-**Key optimizations:**
-- Cache size: 1000 (LRU cache for fast repeated searches)
-- Vector storage: SQLite with persistence
-- Search limits: Optimized for project updates and chat memory
-
-## 🛑 STOPPING EME
-
-```bash
-# If started with npm
-Ctrl+C
-
-# If started with start-eme.sh
-./stop-eme.sh
-
-# Or find and kill the process
-ps aux | grep mcp-server
-kill [PID]
-```
-
----
-
-**Aegis Note:** All confusing files have been moved to `.deprecated/`. This is the only documentation you need. The shield is raised - EME will start cleanly every time. 🛡️

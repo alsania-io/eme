@@ -145,12 +145,11 @@ if (require.main === module) {
 
         if (
           key === "embeddingDimension" ||
-          key === "maxMemoryEntries" ||
-          key === "similarityThreshold"
+          key === "maxMemoryEntries"
         ) {
           (configOverrides as any)[key] = parseInt(value, 10);
-        } else if (key === "memoryGateThreshold") {
-          configOverrides.memoryGateThreshold = parseFloat(value);
+        } else if (key === "similarityThreshold" || key === "memoryGateThreshold") {
+          (configOverrides as any)[key] = parseFloat(value);
         } else if (
           key === "vectorStore" ||
           key === "graphStore" ||
@@ -169,7 +168,9 @@ if (require.main === module) {
   };
 
   const { configPath, configOverrides } = parseCliArgs(args);
-  const config = { ...defaultConfig, ...configOverrides };
+  // Load base config from file/env, then apply CLI overrides
+  const baseConfig = loadConfig(configPath);
+  const config = { ...baseConfig, ...configOverrides };
 
   // Support multiple command aliases
   const serverCommands = ["start-server", "server", "start", "run", "s"];

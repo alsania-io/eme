@@ -23,9 +23,11 @@ export interface DocumentChunk {
 export class LocalRAG {
   private vectorStore: IVectorStore;
   private documents: Map<string, Document> = new Map();
+  private embedFn: ((text: string) => Promise<number[]>) | null;
 
-  constructor(vectorStore: IVectorStore) {
+  constructor(vectorStore: IVectorStore, embedFn?: (text: string) => Promise<number[]>) {
     this.vectorStore = vectorStore;
+    this.embedFn = embedFn || null;
   }
 
   async ingestFile(filePath: string): Promise<{ success: boolean; documentId: string; chunks: number }> {
@@ -70,11 +72,12 @@ export class LocalRAG {
 
     this.documents.set(documentId, document);
 
-    // Add to vector store using the add method
+    // Add to vector store with real embeddings when available
     for (const chunk of document.chunks) {
+      const embedding = this.embedFn ? await this.embedFn(chunk.text) : [];
       await this.vectorStore.add({
         text: chunk.text,
-        embedding: [], // Will be computed by vector store
+        embedding,
         metadata: {
           agentId: 'local-rag',
           namespace: 'documents',
@@ -82,7 +85,7 @@ export class LocalRAG {
           visibility: 'private',
           timestamp: Date.now(),
           version: 1,
-          ...chunk.metadata, // Add chunk-specific metadata
+          ...chunk.metadata,
         },
       });
     }
@@ -115,9 +118,10 @@ export class LocalRAG {
     this.documents.set(documentId, document);
 
     for (const chunk of document.chunks) {
+      const embedding = this.embedFn ? await this.embedFn(chunk.text) : [];
       await this.vectorStore.add({
         text: chunk.text,
-        embedding: [],
+        embedding,
         metadata: {
           agentId: 'local-rag',
           namespace: 'documents',
@@ -134,8 +138,9 @@ export class LocalRAG {
   }
 
   async queryDocuments(query: string, limit: number = 10): Promise<Array<{ text: string; score: number; metadata: Record<string, any> }>> {
-    // For now, use a simple search by query text
-    const results = await this.vectorStore.search([], limit, 'documents');
+    // Use real embedding for query when available
+    const queryEmbedding = this.embedFn ? await this.embedFn(query) : [];
+    const results = await this.vectorStore.search(queryEmbedding, limit, 'documents');
     return results.map(r => ({
       text: r.entry.text,
       score: r.score,

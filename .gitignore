@@ -1,45 +1,41 @@
-# .env
-#Ignore vscode AI rules
-.vscode
-.deprecated
-.github/instructions/codacy.instructions.md
-node_modules/
-dist/
-.env
-*.log
-*.pid
-*.seed
-*.swp
-*.swo
-*.swn
-*.swm
-*.swx
-*.swz
+# .gitignore — EME Project
 
-# Ignore OS generated files
+# Node
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+
+# Environment & secrets
+.env
+.env.keys
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Runtime data
+storage/vectors.db*
+storage/logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS generated
 .DS_Store
 Thumbs.db
 
-# Ignore node_modules
-node_modules/
-
-# Ignore build files
-dist/
-
-# Ignore environment files
-.env
-
-# Ignore log files
-*.log
-.logs/
-
-# Ignore PID files
-*.pid
-
-# Ignore seed files
-*.seed
-
-# Ignore swap files
+# Swap files
 *.swp
 *.swo
 *.swn
@@ -47,55 +43,28 @@ dist/
 *.swx
 *.swz
 
-# Ignore python files
-*.pyc
-*.pyo
-*.pyd
-__pycache__/
-*.py[cod]
-*$py.class
+# Test & coverage
+coverage/
+.nyc_output/
 
-# Ignore Java files
-*.class
-*.jar
-*.war
-*.ear
+# ESLint cache
+.eslintcache
 
-# Ignore JavaScript files
+# PID & seed
+*.pid
+*.seed
+
+# Map files
 *.js.map
-
-# Ignore TypeScript files
 *.ts.map
-
-# Ignore CSS files
 *.css.map
 
-# Ignore SCSS files
-*.scss.map
+# MCP config (may contain paths)
+mcp-config.json
 
-# Ignore LESS files
-*.less.map
+# Deprecated folder stays tracked (per Alsania rules)
+# .deprecated/ — intentionally NOT ignored
 
-# Ignore SASS files
-*.sass.map
-
-# Ignore Stylus files
-*.styl.map
-
-# Ignore CoffeeScript files
-*.coffee.map
-
-# Ignore Dart files
-*.dart.map
-
-# Ignore Go files
-*.go.map
-
-# Ignore Rust files
-*.rs.map
-
-# Ignore Swift files
-*.swift.map
-
-# Ignore Kotlin files
-*.kt.map
+# Python artifacts
+*.pyc
+__pycache__/
