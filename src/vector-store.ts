@@ -656,7 +656,7 @@ export class QdrantVectorStore implements IVectorStore {
 
       // Prepare search vector based on whether we're using named vectors
       const searchVector: any = this.vectorName
-        ? { [this.vectorName]: queryEmbedding }
+        ? [this.vectorName, queryEmbedding]
         : queryEmbedding;
 
       const results = await this.client.search(this.collectionName, {
