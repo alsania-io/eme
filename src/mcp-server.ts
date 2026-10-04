@@ -52,6 +52,14 @@ const SearchMemorySchema = z.object({
     .optional()
     .default(true)
     .describe("Include graph context in results"),
+  format: z
+    .enum(["lean", "full"])
+    .optional()
+    .default("lean")
+    .describe(
+      "Result verbosity. 'lean' (default) returns id/text/namespace/tags/score only " +
+        "(drops embedding + timestamps) — token-lean recall. 'full' returns whole entries.",
+    ),
 });
 
 const GetMemorySchema = z.object({
@@ -381,14 +389,31 @@ export class EMEMCPServer {
         }
 
         case "search_memories": {
-          const { query, limit, namespace, includeGraph } = SearchMemorySchema.parse(args);
+          const { query, limit, namespace, includeGraph, format } = SearchMemorySchema.parse(args);
           const results = await this.memoryManager.searchMemories(query, limit, namespace);
+
+          // Lean recall (memo-master ergonomics): project to id/text/namespace/tags/score,
+          // dropping embedding + timestamps. 'full' preserves prior behavior.
+          const projected =
+            format === "lean"
+              ? results.map((r: any) => {
+                  const entry = r.memory ?? r.entry ?? r;
+                  return {
+                    id: entry.id,
+                    text: entry.text,
+                    namespace: entry.metadata?.namespace,
+                    tags: entry.metadata?.tags,
+                    score: r.score,
+                  };
+                })
+              : results;
+
           let graphData = null;
           if (includeGraph) {
             const graph = await this.memoryManager.getGraph();
             graphData = graph;
           }
-          return { content: [{ type: "text", text: JSON.stringify({ results, graph: graphData }, null, 2) }] };
+          return { content: [{ type: "text", text: JSON.stringify({ results: projected, graph: graphData }, null, 2) }] };
         }
 
         case "get_memory": {
