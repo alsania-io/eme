@@ -424,11 +424,20 @@ export class EMEMCPServer {
 
         case "update_memory": {
           const { id, text, tags } = UpdateMemorySchema.parse(args);
+          // Merge tags into EXISTING metadata rather than replacing it wholesale
+          // (old code set metadata={tags}, destroying agentId/namespace/visibility).
+          const existing = await this.memoryManager.getMemory(id);
+          if (!existing) {
+            return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `Memory ${id} not found` }) }], isError: true };
+          }
           const updates: Partial<any> = {};
-          if (text) updates.text = text;
-          if (tags) updates.metadata = { tags };
-          await this.memoryManager.updateMemory(id, updates);
-          return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
+          if (text !== undefined) updates.text = text;
+          if (tags !== undefined) updates.metadata = { ...existing.metadata, tags };
+          const ok = await this.memoryManager.updateMemory(id, updates);
+          if (ok === false) {
+            return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "Update failed (see server logs)" }) }], isError: true };
+          }
+          return { content: [{ type: "text", text: JSON.stringify({ success: true, id }) }] };
         }
 
         case "delete_memory": {

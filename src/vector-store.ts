@@ -659,12 +659,14 @@ export class QdrantVectorStore implements IVectorStore {
         ? [this.vectorName, queryEmbedding]
         : queryEmbedding;
 
+      // with_vector: false — the manager strips embeddings before returning
+      // to clients, so fetching 2048-float vectors here is pure waste.
       const results = await this.client.search(this.collectionName, {
         vector: searchVector,
         limit: limit * 2,
         filter,
         with_payload: true,
-        with_vector: true,
+        with_vector: false,
       });
 
       const memories = results
@@ -717,10 +719,12 @@ export class QdrantVectorStore implements IVectorStore {
 
   async get(id: string): Promise<MemoryEntry | null> {
     try {
+      // with_vector: false — embeddings are stripped at the manager boundary
+      // before reaching clients; fetching them here is waste.
       const result = await this.client.retrieve(this.collectionName, {
         ids: [id],
         with_payload: true,
-        with_vector: true,
+        with_vector: false,
       });
 
       if (!result || result.length === 0) {
@@ -779,6 +783,8 @@ export class QdrantVectorStore implements IVectorStore {
         return false;
       }
 
+      const nextVersion = (existing.metadata.version ?? 1) + 1;
+
       const updatedPayload: Record<string, any> = {
         ...existing.metadata,
         text: updates.text ?? existing.text,
@@ -788,27 +794,31 @@ export class QdrantVectorStore implements IVectorStore {
         namespace: updates.metadata?.namespace ?? existing.metadata.namespace,
         agentId: updates.metadata?.agentId ?? existing.metadata.agentId,
         timestamp: updates.metadata?.timestamp ?? existing.metadata.timestamp,
-        version: updates.metadata?.version ?? existing.metadata.version,
+        version: nextVersion,
+        createdAt: existing.createdAt ? new Date(existing.createdAt).toISOString() : new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
-      const vector = updates.embedding ?? existing.embedding;
-
-      // Wrap vector in named format if using named vectors
-      const upsertVector: any = this.vectorName
-        ? { [this.vectorName]: vector }
-        : vector;
-
-      await this.client.upsert(this.collectionName, {
-        wait: true,
-        points: [
-          {
-            id,
-            vector: upsertVector,
-            payload: updatedPayload,
-          },
-        ],
-      });
+      // If a NEW embedding is supplied, re-upsert the point (vector + payload).
+      // Otherwise DO NOT send a vector: get() strips vectors (with_vector:false),
+      // so existing.embedding is [] and upserting it fails with
+      // 'Vector dimension error: expected dim: 2048, got 0'. Use setPayload
+      // (payload-only) instead — the stored vector is left untouched.
+      if (updates.embedding && updates.embedding.length > 0) {
+        const upsertVector: any = this.vectorName
+          ? { [this.vectorName]: updates.embedding }
+          : updates.embedding;
+        await this.client.upsert(this.collectionName, {
+          wait: true,
+          points: [{ id, vector: upsertVector, payload: updatedPayload }],
+        });
+      } else {
+        await this.client.setPayload(this.collectionName, {
+          wait: true,
+          payload: updatedPayload,
+          points: [id],
+        });
+      }
 
       return true;
     } catch (error) {

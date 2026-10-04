@@ -163,7 +163,7 @@ export interface MemoryManager {
     namespace?: string,
   ): Promise<SearchResult[]>;
   getMemory(id: string): Promise<MemoryEntry | null>;
-  updateMemory(id: string, updates: Partial<MemoryEntry>): Promise<void>;
+  updateMemory(id: string, updates: Partial<MemoryEntry>): Promise<boolean>;
   deleteMemory(id: string): Promise<void>;
 
   // Vector Store Access
@@ -420,6 +420,21 @@ class MemoryManagerImpl implements MemoryManager {
     return id;
   }
 
+  /**
+   * Strip the raw embedding vector from a memory entry before it crosses the
+   * manager boundary. Embeddings are an internal concern — callers that need
+   * one must use embed(). Returning 2048-float vectors to MCP clients is pure
+   * token waste (a single search could otherwise emit ~20k tokens of floats).
+   *
+   * NOTE: This is the boundary policy: no raw vectors leave MemoryManager.
+   * If a future store returns vectors lazily, that is a store-level concern.
+   */
+  private stripEmbedding(entry: MemoryEntry | null): MemoryEntry | null {
+    if (!entry) return null;
+    const { embedding: _embedding, ...rest } = entry;
+    return { ...rest, embedding: [] } as MemoryEntry;
+  }
+
   async searchMemories(
     query: string,
     limit: number = 5,
@@ -434,19 +449,19 @@ class MemoryManagerImpl implements MemoryManager {
     );
 
     return results.map((result) => ({
-      memory: result.entry,
+      memory: this.stripEmbedding(result.entry)!,
       score: result.score,
     }));
   }
 
   async getMemory(id: string): Promise<MemoryEntry | null> {
     await this.ensureInitialized();
-    return this.vectorStore.get(id);
+    return this.stripEmbedding(await this.vectorStore.get(id));
   }
 
-  async updateMemory(id: string, updates: Partial<MemoryEntry>): Promise<void> {
+  async updateMemory(id: string, updates: Partial<MemoryEntry>): Promise<boolean> {
     await this.ensureInitialized();
-    await this.vectorStore.update(id, updates);
+    return await this.vectorStore.update(id, updates);
   }
 
   async deleteMemory(id: string): Promise<void> {
