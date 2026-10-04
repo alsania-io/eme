@@ -201,6 +201,16 @@ const ListFilesSchema = z.object({}).describe("List all ingested files");
 
 const LocalRAGStatusSchema = z.object({}).describe("Get system status");
 
+// Doctor / self-check schema (see memo-master 'doctor' ergonomics; EME stays the memory system)
+const DoctorSchema = z
+  .object({
+    verbose: z
+      .boolean()
+      .optional()
+      .describe("Include per-check detail (default false: summary only)"),
+  })
+  .describe("Run a self-check of EME health: memory counts, graph, RAG, config, Qdrant reachability");
+
 // Large-File Schemas
 const ReadLargeFileChunkSchema = z.object({
   filePath: z.string().describe("Absolute path to the file"),
@@ -329,6 +339,8 @@ export class EMEMCPServer {
           { name: "delete_file", description: "Delete a previously ingested file or data from the vector database.", inputSchema: zodToJsonSchema(DeleteDocumentSchema, schemaOptions) },
           { name: "list_files", description: "List all files and show which are ingested into the vector database.", inputSchema: zodToJsonSchema(ListFilesSchema, schemaOptions) },
           { name: "local_rag_status", description: "Get system status including total documents, total chunks, database size.", inputSchema: zodToJsonSchema(LocalRAGStatusSchema, schemaOptions) },
+          // Doctor / self-check
+          { name: "doctor", description: "Run a self-check of EME health: memory counts, knowledge graph, RAG index, config, and Qdrant reachability. Returns { ok, checks[] }.", inputSchema: zodToJsonSchema(DoctorSchema, schemaOptions) },
           // Large-File tools
           { name: "read_large_file_chunk", description: "Read a specific chunk of a large file with intelligent chunking based on file type.", inputSchema: zodToJsonSchema(ReadLargeFileChunkSchema, schemaOptions) },
           { name: "search_in_large_file", description: "Search for a pattern in a large file with context lines. Supports regex and case-sensitive search.", inputSchema: zodToJsonSchema(SearchInLargeFileSchema, schemaOptions) },
@@ -367,7 +379,7 @@ export class EMEMCPServer {
           const id = await this.memoryManager.addMemory(text, agentId, namespace, tags, visibility);
           return { content: [{ type: "text", text: JSON.stringify({ id, success: true }) }] };
         }
-        
+
         case "search_memories": {
           const { query, limit, namespace, includeGraph } = SearchMemorySchema.parse(args);
           const results = await this.memoryManager.searchMemories(query, limit, namespace);
@@ -378,13 +390,13 @@ export class EMEMCPServer {
           }
           return { content: [{ type: "text", text: JSON.stringify({ results, graph: graphData }, null, 2) }] };
         }
-        
+
         case "get_memory": {
           const { id } = GetMemorySchema.parse(args);
           const memory = await this.memoryManager.getMemory(id);
           return { content: [{ type: "text", text: JSON.stringify(memory, null, 2) }] };
         }
-        
+
         case "update_memory": {
           const { id, text, tags } = UpdateMemorySchema.parse(args);
           const updates: Partial<any> = {};
@@ -393,47 +405,47 @@ export class EMEMCPServer {
           await this.memoryManager.updateMemory(id, updates);
           return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
         }
-        
+
         case "delete_memory": {
           const { id } = DeleteMemorySchema.parse(args);
           await this.memoryManager.deleteMemory(id);
           return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
         }
-        
+
         case "get_graph": {
           const graph = await this.memoryManager.getGraph();
           return { content: [{ type: "text", text: JSON.stringify(graph, null, 2) }] };
         }
-        
+
         case "get_graph_stats": {
           const stats = await this.memoryManager.getGraphStats();
           return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
         }
-        
+
         case "create_snapshot": {
           const { name, type, description } = CreateSnapshotSchema.parse(args);
           const snapshot = await this.memoryManager.createSnapshot(name, type, description);
           return { content: [{ type: "text", text: JSON.stringify(snapshot, null, 2) }] };
         }
-        
+
         case "list_snapshots": {
           const { type } = ListSnapshotsSchema.parse(args);
           const snapshots = await this.memoryManager.listSnapshots(type);
           return { content: [{ type: "text", text: JSON.stringify(snapshots, null, 2) }] };
         }
-        
+
         case "load_snapshot": {
           const { id } = LoadSnapshotSchema.parse(args);
           const snapshot = await this.memoryManager.loadSnapshot(id);
           return { content: [{ type: "text", text: JSON.stringify(snapshot, null, 2) }] };
         }
-        
+
         case "delete_snapshot": {
           const { id } = DeleteSnapshotSchema.parse(args);
           await this.memoryManager.deleteSnapshot(id);
           return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
         }
-        
+
         case "get_config": {
           // Strip secrets before returning config
           const safeConfig = { ...this.config } as Record<string, any>;
@@ -444,7 +456,7 @@ export class EMEMCPServer {
           }
           return { content: [{ type: "text", text: JSON.stringify(safeConfig, null, 2) }] };
         }
-        
+
         case "update_config": {
           const { key, value } = UpdateConfigSchema.parse(args);
 
@@ -493,79 +505,79 @@ export class EMEMCPServer {
             }],
           };
         }
-        
+
         case "create_entities": {
           const { entities } = CreateEntitiesSchema.parse(args);
           const results = await this.memoryManager.createEntities(entities);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "create_relations": {
           const { relations } = CreateRelationsSchema.parse(args);
           const results = await this.memoryManager.createRelations(relations);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "add_observations": {
           const { observations } = AddObservationsSchema.parse(args);
           const results = await this.memoryManager.addObservations(observations);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "delete_entities": {
           const { entityNames } = DeleteEntitiesSchema.parse(args);
           const results = await this.memoryManager.deleteEntities(entityNames);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "delete_observations": {
           const { deletions } = DeleteObservationsSchema.parse(args);
           const results = await this.memoryManager.deleteObservations(deletions);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "delete_relations": {
           const { relations } = DeleteRelationsSchema.parse(args);
           const results = await this.memoryManager.deleteRelations(relations);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "read_graph": {
           const graph = await this.memoryManager.getGraph();
           return { content: [{ type: "text", text: JSON.stringify(graph, null, 2) }] };
         }
-        
+
         case "search_nodes": {
           const { query } = args as { query: string };
           const results = await this.memoryManager.searchNodes(query);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "open_nodes": {
           const { names } = OpenNodesSchema.parse(args);
           const results = await this.memoryManager.openNodes(names);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         // Local-RAG cases
         case "query_documents": {
           const { query, limit } = QueryDocumentsSchema.parse(args);
           const results = await this.localRAG!.queryDocuments(query, limit);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "ingest_file": {
           const { filePath } = IngestFileSchema.parse(args);
           const result = await this.localRAG!.ingestFile(filePath);
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
-        
+
         case "ingest_data": {
           const parsed = IngestDataSchema.parse(args);
           const result = await this.localRAG!.ingestData(parsed.content, { source: parsed.metadata.source, format: parsed.metadata.format });
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
-        
+
         case "delete_file": {
           const { filePath, source } = DeleteDocumentSchema.parse(args);
           if (filePath) {
@@ -578,48 +590,97 @@ export class EMEMCPServer {
           }
           throw new Error("Either filePath or source must be provided");
         }
-        
+
         case "list_files": {
           const files = this.localRAG!.listDocuments();
           return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
         }
-        
+
         case "local_rag_status": {
           const status = this.localRAG!.getStatus();
           return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
         }
-        
+
+        // Doctor / self-check (memo-master 'doctor' ergonomics)
+        case "doctor": {
+          const { verbose } = DoctorSchema.parse(args ?? {});
+          const checks: Array<{ name: string; ok: boolean; detail?: string }> = [];
+
+          // 1. Memory manager present + vector store reachable (Qdrant)
+          try {
+            const store = this.memoryManager.getVectorStore();
+            const all = await store.getAll();
+            checks.push({ name: "vector_store", ok: true, detail: `${all.length} memories` });
+          } catch (e: any) {
+            checks.push({ name: "vector_store", ok: false, detail: e.message });
+          }
+
+          // 2. Knowledge graph
+          try {
+            const g = await this.memoryManager.getGraphStats();
+            checks.push({ name: "graph", ok: true, detail: `${g.totalNodes} nodes / ${g.totalEdges} edges` });
+          } catch (e: any) {
+            checks.push({ name: "graph", ok: false, detail: e.message });
+          }
+
+          // 3. RAG index
+          try {
+            if (!this.localRAG) {
+              const vectorStore = this.memoryManager.getVectorStore();
+              const embedFn = (text: string) => this.memoryManager!.embed(text);
+              this.localRAG = new LocalRAG(vectorStore, embedFn);
+            }
+            const s = this.localRAG.getStatus();
+            checks.push({ name: "rag", ok: true, detail: `${s.totalDocuments} docs / ${s.totalChunks} chunks` });
+          } catch (e: any) {
+            checks.push({ name: "rag", ok: false, detail: e.message });
+          }
+
+          // 4. Config loaded
+          checks.push({
+            name: "config",
+            ok: !!this.config && Object.keys(this.config).length > 0,
+            detail: `${Object.keys(this.config || {}).length} keys`,
+          });
+
+          const ok = checks.every((c) => c.ok);
+          const report = verbose
+            ? { ok, checks }
+            : { ok, failed: checks.filter((c) => !c.ok).map((c) => c.name), checks: checks.map((c) => ({ name: c.name, ok: c.ok })) };
+          return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
+        }
+
         // Large-File cases
         case "read_large_file_chunk": {
           const { filePath, chunkIndex, linesPerChunk, includeLineNumbers } = ReadLargeFileChunkSchema.parse(args);
           const result = await this.largeFileHandler!.readChunk(filePath, chunkIndex, linesPerChunk, includeLineNumbers);
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
-        
+
         case "search_in_large_file": {
           const { filePath, pattern, caseSensitive, regex, maxResults, contextBefore, contextAfter, startLine, endLine } = SearchInLargeFileSchema.parse(args);
           const results = await this.largeFileHandler!.searchInFile(filePath, pattern, caseSensitive, regex, maxResults, contextBefore, contextAfter, startLine, endLine);
           return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
-        
+
         case "get_file_structure": {
           const { filePath } = GetFileStructureSchema.parse(args);
           const structure = await this.largeFileHandler!.getFileStructure(filePath);
           return { content: [{ type: "text", text: JSON.stringify(structure, null, 2) }] };
         }
-        
+
         case "navigate_to_line": {
           const { filePath, lineNumber, contextLines } = NavigateToLineSchema.parse(args);
           const result = await this.largeFileHandler!.navigateToLine(filePath, lineNumber, contextLines);
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
-        
+
         case "get_file_summary": {
           const { filePath } = GetFileSummarySchema.parse(args);
           const summary = await this.largeFileHandler!.getFileSummary(filePath);
           return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
         }
-        
+
         case "stream_large_file": {
           const { filePath, chunkSize, startOffset, maxBytes, maxChunks } = StreamLargeFileSchema.parse(args);
           const result = await this.largeFileHandler!.streamFile(filePath, chunkSize, startOffset, maxBytes, maxChunks);
@@ -627,7 +688,7 @@ export class EMEMCPServer {
           const chunks = result.chunks.map(chunk => chunk.toString('base64'));
           return { content: [{ type: "text", text: JSON.stringify({ ...result, chunks }, null, 2) }] };
         }
-        
+
         default:
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -656,6 +717,14 @@ export class EMEMCPServer {
     await this.server.connect(transport);
     console.error("[EME-MCP] Server running on stdio");
   }
+
+  // NOTE: session/API-key tools (session_push, generate_api_key, etc.) live in
+  // mcp-server-auth.ts. They were never registered in this server's ListTools
+  // handler and had no callers — the executeTool bridge below was orphaned from
+  // a partial refactor and referenced undefined handlers. Removed 2026-09-24 to
+  // restore compilation. If session/API-key support is wanted here, port the
+  // imports, fields, constructor init, and tool registrations from
+  // mcp-server-auth.ts together — not just the bridge method.
 
   async close(): Promise<void> {
     if (this.memoryManager) {
