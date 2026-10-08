@@ -362,8 +362,16 @@ export class EMEMCPServer {
 
     // Handle tool calls
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
+      return this.dispatchTool(request.params.name, request.params.arguments ?? {});
+    });
+  }
 
+  /**
+   * Core tool dispatch — shared by the MCP CallTool handler and the HTTP
+   * server's executeTool(). Returns MCP-shaped { content: [{type:'text',text}] }.
+   */
+  async dispatchTool(name: string, args: any): Promise<any> {
+    {
       try {
         if (!this.memoryManager) {
           throw new Error("Memory manager not initialized");
@@ -738,7 +746,29 @@ export class EMEMCPServer {
           isError: true,
         };
       }
-    });
+    }
+  }
+
+  /**
+   * Direct tool execution for non-MCP callers (e.g. the HTTP GUI server).
+   * Unwraps the MCP content envelope and returns the raw JSON result.
+   */
+  async executeTool(name: string, args: any): Promise<any> {
+    const res = await this.dispatchTool(name, args);
+    try {
+      const text = res?.content?.[0]?.text;
+      if (typeof text === "string") {
+        const parsed = JSON.parse(text);
+        // Preserve error signaling for HTTP callers
+        if (res.isError) {
+          throw new Error(parsed?.error || `Tool ${name} failed`);
+        }
+        return parsed;
+      }
+    } catch (e: any) {
+      if (e?.message) throw e;
+    }
+    return res;
   }
 
   async initialize(): Promise<void> {

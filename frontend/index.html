@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Echo Memory Engine — EME Dashboard</title>
+  <meta name="description" content="Visual setup, configuration, and management dashboard for Alsania's Echo Memory Engine (EME).">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Top Header Navigation -->
+  <header class="app-header">
+    <div class="brand-container">
+      <button class="mobile-menu-btn" id="mobileMenuToggle" aria-label="Toggle Menu">☰</button>
+      <div class="brand-logo">⚡</div>
+      <div class="brand-text">
+        <h1>Echo Memory Engine</h1>
+        <span>Alsania Sovereign AI</span>
+      </div>
+    </div>
+    
+    <div class="header-actions">
+      <div class="server-input-group" title="EME HTTP Server Endpoint">
+        <span style="color: var(--text-dim); margin-right: 4px;">HOST:</span>
+        <input type="text" id="serverEndpoint" value="http://localhost:3100" placeholder="http://localhost:3100">
+      </div>
+      <span class="status-badge" id="connectionBadge">
+        <span class="status-dot"></span>
+        <span id="connectionStatusText">Checking...</span>
+      </span>
+      <button class="btn btn-primary" id="btnSaveServer" title="Save configuration directly to EME server">
+        <span>💾</span> Save Config
+      </button>
+      <button class="btn btn-secondary" id="btnLoadServer" title="Load active configuration from EME server">
+        <span>🔄</span> Reload
+      </button>
+      <button class="btn btn-outline" id="btnExportConfig" title="Download configuration as JSON file">
+        <span>📥</span> Export
+      </button>
+      <button class="btn btn-outline" id="btnImportTrigger" title="Load configuration from a JSON file">
+        <span>📤</span> Import
+      </button>
+      <input type="file" id="importFileInput" accept=".json" style="display: none;">
+      <button class="btn btn-outline" id="btnResetDefaults" title="Reset to minimal defaults">
+        <span>⚠️</span> Reset
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Application Layout -->
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="appSidebar">
+      <div id="sidebarNav" style="display: flex; flex-direction: column; gap: 0.35rem;"></div>
+      
+      <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+        <div class="field-label-row" style="margin-bottom: 0;">
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Advanced Options</span>
+          <label class="switch" style="transform: scale(0.8);">
+            <input type="checkbox" id="toggleAdvanced">
+            <span class="slider-round"></span>
+          </label>
+        </div>
+      </div>
+    </aside>
+    <!-- Content Viewport -->
+    <main class="main-content">
+      <!-- Category 1: Overview Panel -->
+      <section class="panel-view" id="panel-overview">
+        <div class="panel-header">
+          <h2>📊 System Overview & Quick Profiles</h2>
+          <p>Configure and monitor your sovereign Echo Memory Engine instance.</p>
+        </div>
+
+        <!-- Quick Stats Display -->
+        <div class="stats-row">
+          <div class="stat-card">
+            <div class="stat-title">Embedding Model</div>
+            <div class="stat-number" id="statEmbedding" style="font-size: 1.15rem; color: #34d399;">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-title">Vector Dimensions</div>
+            <div class="stat-number" id="statDimensions">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-title">Vector Database</div>
+            <div class="stat-number" id="statVectorStore" style="font-size: 1.15rem; color: #38bdf8;">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-title">Memory Gate</div>
+            <div class="stat-number" id="statMemoryGate">-</div>
+          </div>
+        </div>
+
+        <h3 style="font-size: 1.1rem; color: #fff; margin: 1.5rem 0 0.75rem;">One-Click Configuration Presets</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+          Select a curated configuration profile tailored to your environment.
+        </p>
+        <div class="presets-grid" id="presetsContainer"></div>
+      </section>
+      <!-- Dynamic Configuration Form Panels -->
+      <section class="panel-view" id="panel-dynamic-form" style="display: none;">
+        <div class="panel-header">
+          <h2 id="dynamicPanelTitle">⚙️ Settings</h2>
+          <p id="dynamicPanelDesc">Configure options for this category.</p>
+        </div>
+
+        <div class="form-grid" id="dynamicFormContainer"></div>
+        
+        <div style="margin-top: 1.5rem; display: flex; gap: 0.75rem;">
+          <button class="btn btn-primary" id="btnSaveCategory">
+            <span>💾</span> Save All Changes
+          </button>
+          <button class="btn btn-secondary" id="btnResetCategory">
+            <span>↩️</span> Revert Category
+          </button>
+        </div>
+      </section>
+      <!-- Live Test Bench / Playground -->
+      <section class="panel-view" id="panel-playground" style="display: none;">
+        <div class="panel-header">
+          <h2>🧪 Live Test Bench & Health Diagnostics</h2>
+          <p>Verify semantic search recall, add test memories, and run system diagnostic audits.</p>
+        </div>
+
+        <!-- Doctor Diagnostic Audit -->
+        <div class="playground-section">
+          <h3 style="color: #fff; margin-bottom: 0.5rem;">🩺 System Health Audit (Doctor)</h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+            Audits vector store reachability, Qdrant indices, memory count, and graph store connectivity.
+          </p>
+          <button class="btn btn-secondary" id="btnRunDoctor">
+            <span>🔍</span> Run Health Diagnostic Audit
+          </button>
+          <div class="playground-results" id="doctorOutput">Diagnostics not run yet. Click above to run audit.</div>
+        </div>
+
+        <!-- Semantic Search Test -->
+        <div class="playground-section">
+          <h3 style="color: #fff; margin-bottom: 0.5rem;">🔍 Semantic Recall Query</h3>
+          <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+            <input type="text" class="form-control" id="playgroundSearchQuery" placeholder="Type a search query (e.g. 'user interface preferences')...">
+            <button class="btn btn-primary" id="btnExecuteSearch">Search</button>
+          </div>
+          <div class="playground-results" id="searchOutput">Results will appear here...</div>
+        </div>
+        <!-- Add Memory Test -->
+        <div class="playground-section">
+          <h3 style="color: #fff; margin-bottom: 0.5rem;">📝 Store Test Memory</h3>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.75rem;">
+            <input type="text" class="form-control" id="playgroundMemoryText" placeholder="Enter memory text to embed and store...">
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" class="form-control" id="playgroundNamespace" placeholder="Namespace (default: default)" value="default" style="max-width: 200px;">
+              <button class="btn btn-primary" id="btnExecuteAddMemory">Add Memory</button>
+            </div>
+          </div>
+          <div class="playground-results" id="addMemoryOutput">Ready to ingest memory.</div>
+        </div>
+      </section>
+
+      <!-- Raw JSON Editor Panel -->
+      <section class="panel-view" id="panel-raw" style="display: none;">
+        <div class="panel-header">
+          <h2>📝 Raw JSON Configuration</h2>
+          <p>Directly inspect or edit the low-level JSON configuration.</p>
+        </div>
+        <textarea class="json-textarea" id="rawJsonEditor" spellcheck="false"></textarea>
+        <div style="margin-top: 1rem; display: flex; gap: 0.75rem;">
+          <button class="btn btn-primary" id="btnApplyRawJson">Apply Raw JSON</button>
+          <button class="btn btn-secondary" id="btnFormatRawJson">Format JSON</button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Application Logic -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -26,6 +26,9 @@ npm-debug.log*
 # Runtime data
 storage/vectors.db*
 storage/logs/
+storage/api-keys.json
+storage/snapshots/*
+!storage/snapshots/snapshots.json
 
 # IDE
 .vscode/
