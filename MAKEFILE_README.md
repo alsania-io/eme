@@ -27,6 +27,7 @@ make clean
 | `audit` | `make audit` | Run `npm audit` for vulnerabilities |
 | `start` | `make start` | Build and start the MCP server |
 | `server` | `make server` | Alias for `start` |
+| `gui` | `make gui` | Start EME HTTP server and GUI dashboard on port 3100 |
 | `dev` | `make dev` | TypeScript watch mode for development |
 | `container` | `make container` | Build Podman container image |
 | `release` | `make release` | Clean, build, test — ready for publish |

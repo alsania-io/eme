@@ -1,7 +1,7 @@
 {
   "embeddingModel": "openrouter",
   "embeddingModelPath": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
-  "embeddingDimension": 1024,
+  "embeddingDimension": 2048,
   "openRouterApiKey": "${OPENROUTER_API_KEY}",
   "openRouterReferer": "https://alsania-io.com",
   "openRouterTitle": "Echo Memory Engine",
@@ -9,9 +9,11 @@
   "fallbackEmbeddingDimension": 384,
   "vectorStore": "qdrant",
   "qdrantUrl": "http://localhost:6333",
-  "qdrantCollection": "alsania-mem",
+  "qdrantCollection": "am2",
+  "qdrantVectorName": "v2048",
   "graphStore": "memory",
   "memoryGateEnabled": true,
   "memoryGateThreshold": 0.3,
-  "logLevel": "info"
+  "logLevel": "info",
+  "development": true
 }

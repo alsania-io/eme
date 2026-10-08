@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 // Minimal defaults - NO circular dependency with index.ts
-const minimalDefaults: Config = {
+export const minimalDefaults: Config = {
   // Embedding configuration
   embeddingModel: "local",
   embeddingModelPath: undefined,

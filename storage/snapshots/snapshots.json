@@ -6,5 +6,69 @@
     "timestamp": 1772347866736,
     "size": 2,
     "type": "memory"
+  },
+  "1bb3c70c-68c0-4755-8895-fd703e33a114": {
+    "id": "1bb3c70c-68c0-4755-8895-fd703e33a114",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1774847724635,
+    "size": 1511,
+    "type": "full"
+  },
+  "9f307d0d-59d9-4b8f-a570-a7ea9f1a6b23": {
+    "id": "9f307d0d-59d9-4b8f-a570-a7ea9f1a6b23",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1774847806853,
+    "size": 1511,
+    "type": "full"
+  },
+  "67b70999-ba92-4c9e-8e44-e04367e3ccac": {
+    "id": "67b70999-ba92-4c9e-8e44-e04367e3ccac",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1791455709518,
+    "size": 1511,
+    "type": "full"
+  },
+  "2b883c62-19a0-4c7b-af8c-ea805a1667c5": {
+    "id": "2b883c62-19a0-4c7b-af8c-ea805a1667c5",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1791455713323,
+    "size": 1511,
+    "type": "full"
+  },
+  "63ca6a3e-71e0-4e42-8395-94552c404ffe": {
+    "id": "63ca6a3e-71e0-4e42-8395-94552c404ffe",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1791455744255,
+    "size": 1511,
+    "type": "full"
+  },
+  "586a39dd-8121-4986-a681-32e13afff21a": {
+    "id": "586a39dd-8121-4986-a681-32e13afff21a",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1791455780462,
+    "size": 1511,
+    "type": "full"
+  },
+  "a78573ed-7f06-40d1-b157-cdb95ee006ee": {
+    "id": "a78573ed-7f06-40d1-b157-cdb95ee006ee",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1791456131286,
+    "size": 1511,
+    "type": "full"
+  },
+  "d2322fad-884a-463f-b37a-b563525b7f67": {
+    "id": "d2322fad-884a-463f-b37a-b563525b7f67",
+    "name": "test-snap",
+    "description": "Test snapshot",
+    "timestamp": 1791456603908,
+    "size": 1511,
+    "type": "full"
   }
 }

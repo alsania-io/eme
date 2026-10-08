@@ -1,10 +1,10 @@
 {
   "name": "@alsania-io/eme",
-  "version": "1.1.4",
+  "version": "1.2.1",
   "description": "Echo Memory Engine - Alsania's sovereign memory system",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alsania-dev/eme.git"
+    "url": "git+https://github.com/alsania-io/eme.git"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,6 +21,7 @@
     "inspector": "npx -y @modelcontextprotocol/inspector",
     "start:clean": "node --no-warnings dist/index.js server",
     "server": "node dist/index.js server",
+    "gui": "node dist/eme-http-server.js",
     "test:cli": "node dist/index.js test",
     "config": "node dist/index.js config",
     "help": "node dist/index.js help",
@@ -45,6 +46,7 @@
   "author": "Alsania I/O",
   "license": "MIT",
   "bin": {
+    "eme-cli": "bin/eme-cli.js",
     "eme": "dist/index.js"
   },
   "files": [

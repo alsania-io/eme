@@ -1,6 +1,6 @@
 # EME — Makefile
 
-.PHONY: build test test-unit clean lint audit start server dev help
+.PHONY: build test test-unit clean lint audit start server dev gui help
 
 # Default target
 help:
@@ -14,6 +14,7 @@ help:
 	@echo "  make audit       Run npm security audit"
 	@echo "  make start       Start the MCP server"
 	@echo "  make server      Start the MCP server (alias)"
+	@echo "  make gui         Start EME HTTP server with GUI dashboard (port 3100)"
 	@echo "  make dev         Start TypeScript in watch mode"
 	@echo "  make container   Build Podman container"
 	@echo "  make release     Build, test, and prepare for publish"
@@ -38,6 +39,9 @@ start: build
 	node dist/index.js server
 
 server: start
+
+gui: build
+	node dist/eme-http-server.js
 
 dev:
 	npx tsc --watch

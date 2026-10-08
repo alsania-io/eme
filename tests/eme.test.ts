@@ -46,7 +46,7 @@ describe('EME — Echo Memory Engine', () => {
       const mem = await mm.getMemory(id);
       expect(mem).not.toBeNull();
       expect(mem!.text).toBe('Test memory about sovereignty');
-      expect(mem!.embedding.length).toBe(384);
+      expect(mem!.embedding.length).toBe(0); // stripEmbedding token-lean boundary policy
     });
 
     it('should search memories by semantic similarity', async () => {
@@ -72,15 +72,13 @@ describe('EME — Echo Memory Engine', () => {
   describe('Dimension switching via reinitialize()', () => {
     it('should allow switching embedding dimensions', async () => {
       mm = await createMemoryManager(makeTestConfig({ embeddingDimension: 256 }));
-      const id1 = await mm.addMemory('Memory at 256 dim', 'test', 'dim', [], 'shared');
-      const mem1 = await mm.getMemory(id1);
-      expect(mem1!.embedding.length).toBe(256);
+      const emb1 = await mm.embed('Memory at 256 dim');
+      expect(emb1.length).toBe(256);
 
       // Reinitialize to 512 dimensions
       await mm.reinitialize(makeTestConfig({ embeddingDimension: 512 }));
-      const id2 = await mm.addMemory('Memory at 512 dim', 'test', 'dim', [], 'shared');
-      const mem2 = await mm.getMemory(id2);
-      expect(mem2!.embedding.length).toBe(512);
+      const emb2 = await mm.embed('Memory at 512 dim');
+      expect(emb2.length).toBe(512);
     });
 
     it('should search correctly after dimension change', async () => {
@@ -90,7 +88,7 @@ describe('EME — Echo Memory Engine', () => {
 
       const results = await mm.searchMemories('testing', 5, 'reinit');
       expect(results.length).toBeGreaterThan(0);
-      expect(results[0].memory.embedding.length).toBe(512);
+      expect(results[0].score).toBeGreaterThan(0);
     });
   });
 

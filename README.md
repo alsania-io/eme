@@ -23,7 +23,7 @@ Echo Memory Engine (EME) is a sovereign memory system for AI agents that provide
 ### Installation
 
 ```bash
-npm install @alsania-io/eme
+npm install @alsania-io/eme@latest
 ```
 
 ### Start the MCP Server
@@ -221,4 +221,4 @@ MIT License — see LICENSE file for details.
 
 ---
 
-**Made by [Alsania I/O](https://alsania.io)** — Building sovereign AI infrastructure.
+**Made by [Alsania I/O](https://alsania-io.com)** — Building sovereign AI infrastructure.
