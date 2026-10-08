@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { URL } from "url";
 import { EMEMCPServer } from "./mcp-server.js";
