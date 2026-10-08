@@ -24,6 +24,7 @@ export const minimalDefaults: Config = {
   postgresConnection: undefined,
   qdrantUrl: "http://localhost:6333",
   qdrantCollection: "alsania-mem",
+  qdrantVectorName: undefined,
 
   // Graph store configuration
   graphStore: "memory",
@@ -82,9 +83,14 @@ export function loadConfig(configPath?: string): Config {
   // Env vars have HIGHEST priority (last spread wins)
   let config: Partial<Config> = { ...minimalDefaults };
 
-  // 1. Load from default config file in project root
-  const defaultConfigPath = path.join(process.cwd(), "eme-config.json");
-  if (fs.existsSync(defaultConfigPath)) {
+  // 1. Load from default config file. Prefer project-root eme-config.json,
+  //    fall back to storage/eme-config.json (where setup writes it).
+  const candidatePaths = [
+    path.join(process.cwd(), "eme-config.json"),
+    path.join(process.cwd(), "storage", "eme-config.json"),
+  ];
+  const defaultConfigPath = candidatePaths.find((p) => fs.existsSync(p));
+  if (defaultConfigPath) {
     const fileConfig = loadFromFile(defaultConfigPath);
     config = { ...config, ...fileConfig };
   }
@@ -193,6 +199,9 @@ function loadFromEnv(): Partial<Config> {
   }
   if (process.env.QDRANT_COLLECTION) {
     config.qdrantCollection = process.env.QDRANT_COLLECTION;
+  }
+  if (process.env.QDRANT_VECTOR_NAME) {
+    config.qdrantVectorName = process.env.QDRANT_VECTOR_NAME;
   }
 
   // Graph store configuration

@@ -205,7 +205,15 @@ export class EMEHTTPServer {
   private async saveConfigToFile(): Promise<void> {
     const fs = await import("fs");
     const path = await import("path");
-    const configPath = path.join(process.cwd(), "eme-config.json");
+    // Save to the SAME location loadConfig() reads from: prefer an existing
+    // storage/eme-config.json, then root eme-config.json, else create in storage/.
+    const rootPath = path.join(process.cwd(), "eme-config.json");
+    const storagePath = path.join(process.cwd(), "storage", "eme-config.json");
+    const configPath = fs.existsSync(storagePath)
+      ? storagePath
+      : (fs.existsSync(rootPath) ? rootPath : storagePath);
+    // Ensure directory exists (storage/ may not in a fresh checkout)
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
     // Don't save secrets to file
     const safeConfig = { ...this.config };
     const secretKeys = ['encryptionKey', 'openRouterApiKey', 'postgresConnection'];
