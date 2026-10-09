@@ -2,7 +2,7 @@ import "dotenv/config";
 import type { Config, MemoryGateFilter, SearchResult } from "./types.js";
 import { createMemoryManager } from "./memory-manager.js";
 import { EMEMCPServer } from "./mcp-server.js";
-import { loadConfig } from "./config-loader.js";
+import { loadConfig, minimalDefaults } from "./config-loader.js";
 
 export { MemoryManager, createMemoryManager } from "./memory-manager.js";
 export { SQLiteVectorStore, createVectorStore } from "./vector-store.js";
@@ -19,32 +19,15 @@ export type {
 export { EMEMCPServer } from "./mcp-server.js";
 export { loadConfig } from "./config-loader.js";
 
-// Default configuration
+// Default configuration.
+// Derived from minimalDefaults so new Config keys never break this literal —
+// only the Qdrant-specific overrides are spelled out here.
 export const defaultConfig: Config = {
-  // Embedding configuration
-  embeddingModel: "local",
-  embeddingDimension: 384,
-
+  ...minimalDefaults,
   // Vector store configuration - QDRANT
   vectorStore: "qdrant",
   qdrantUrl: "http://localhost:6333",
   qdrantCollection: "alsania-mem",
-
-  // Graph store configuration
-  graphStore: "memory",
-
-  // Snapshot configuration
-  snapshotStore: "filesystem",
-  snapshotPath: "./storage/snapshots",
-
-  // Memory gate configuration
-  memoryGateEnabled: true,
-  memoryGateThreshold: 0.3,
-
-  // General configuration
-  maxMemoryEntries: 10000,
-  similarityThreshold: 0.3,
-  logLevel: "info",
 };
 
 // Utility function to create and start MCP server

@@ -15,6 +15,9 @@ import { randomUUID } from "crypto";
 
 import { EmbeddingProvider } from './embeddings/types.js';
 import { OpenRouterEmbeddingProvider } from './embeddings/openrouter.js';
+import { TierStore, PruneReport, TierEntry } from './tier-store.js';
+import { classifyCapture } from './capture-classifier.js';
+import type { CaptureRequest, CaptureClassification } from './types.js';
 
 /**
  * Local embedding model — hash-based fallback.
@@ -233,6 +236,19 @@ export interface MemoryManager {
 
   // Expose embedding for consumers like LocalRAG
   embed(text: string): Promise<number[]>;
+
+  // --- Enhanced Protocol (Phase 1) ---
+  /** Classify + store in one call. Returns classification and stored id (or null). */
+  capture(
+    req: CaptureRequest,
+  ): Promise<{ classification: CaptureClassification; id: string | null }>;
+  /** Entries within the last `hours`, newest first (spans all tiers). */
+  getRecent(hours: number, limit: number): TierEntry[];
+  /** Re-enforce tier bounds. Never deletes. Returns what moved. */
+  prune(): PruneReport;
+  tierHotCount(): number;
+  tierWarmCount(): number;
+  tierColdCount(): number;
 }
 
 class MemoryManagerImpl implements MemoryManager {
@@ -242,10 +258,17 @@ class MemoryManagerImpl implements MemoryManager {
   private embeddingModel: EmbeddingModel;
   private config: Config;
   private initialized: boolean = false;
+  private tiers: TierStore;
+  /** Last assigned timestamp — guarantees strictly increasing order within a run. */
+  private lastTimestamp: number = 0;
 
   constructor(config: Config) {
     this.config = config;
     this.embeddingModel = new EmbeddingModel(this.config);
+    this.tiers = new TierStore({
+      hotLimit: config.tierHotLimit ?? 100,
+      warmLimit: config.tierWarmLimit ?? 500,
+    });
   }
 
   async initialize(): Promise<void> {
@@ -382,12 +405,15 @@ class MemoryManagerImpl implements MemoryManager {
   ): Promise<string> {
     await this.ensureInitialized();
     const embedding = await this.embeddingModel.embed(text);
+    // Monotonic timestamp: two adds in the same millisecond must still order.
+    const now = Date.now();
+    this.lastTimestamp = now > this.lastTimestamp ? now : this.lastTimestamp + 1;
     const metadata = {
       agentId,
       namespace,
       tags,
       visibility,
-      timestamp: Date.now(),
+      timestamp: this.lastTimestamp,
       version: 1,
     };
 
@@ -415,6 +441,18 @@ class MemoryManagerImpl implements MemoryManager {
         visibility,
         timestamp: metadata.timestamp,
       },
+    });
+
+    // Enhanced Protocol: place into the in-process tier store. Placement is a
+    // cache/priority concern only — durability is the vector store's job.
+    this.tiers.put({
+      id,
+      text: filter.llmCompression || text,
+      namespace,
+      tags,
+      priority: "medium",
+      timestamp: metadata.timestamp,
+      tier: "hot",
     });
 
     return id;
@@ -711,6 +749,52 @@ class MemoryManagerImpl implements MemoryManager {
       await this.snapshotStore.close();
     }
     this.initialized = false;
+  }
+
+  // --- Enhanced Protocol (Phase 1) ---
+
+  async capture(
+    req: CaptureRequest,
+  ): Promise<{ classification: CaptureClassification; id: string | null }> {
+    await this.ensureInitialized();
+    const classification = classifyCapture(req);
+    if (!classification.shouldSave || !req.text || req.text.trim().length === 0) {
+      return { classification, id: null };
+    }
+    const id = await this.addMemory(
+      req.text,
+      req.agentId ?? "unknown",
+      req.namespace ?? "default",
+      req.tags ?? [],
+      req.visibility ?? "shared",
+    );
+    // Apply the classifier's priority to the just-placed hot entry.
+    const placed = this.tiers.get(id);
+    if (placed) {
+      placed.priority = classification.priority;
+      this.tiers.prune();
+    }
+    return { classification, id };
+  }
+
+  getRecent(hours: number = 24, limit: number = 20): TierEntry[] {
+    return this.tiers.getRecent(hours, limit);
+  }
+
+  prune(): PruneReport {
+    return this.tiers.prune();
+  }
+
+  tierHotCount(): number {
+    return this.tiers.hotCount();
+  }
+
+  tierWarmCount(): number {
+    return this.tiers.warmCount();
+  }
+
+  tierColdCount(): number {
+    return this.tiers.coldCount();
   }
 
   /** Expose embedding computation for consumers like LocalRAG */

@@ -66,6 +66,24 @@ const GetMemorySchema = z.object({
   id: z.string().uuid().describe("ID of the memory to retrieve"),
 });
 
+// Enhanced Protocol (Phase 1) schemas
+const CaptureSchema = z.object({
+  text: z.string().describe("The content to capture"),
+  context: z.string().optional().describe("Why it matters"),
+  priority: z.enum(["high", "medium", "low"]).optional().default("medium").describe("Capture priority"),
+  tags: z.array(z.string()).optional().default([]).describe("Tags to categorize the memory"),
+  namespace: z.string().optional().default("default").describe("Namespace for the memory"),
+  agentId: z.string().optional().default("unknown").describe("ID of the capturing agent"),
+  visibility: z.enum(["private", "shared", "system"]).optional().default("shared").describe("Visibility level"),
+});
+
+const GetRecentMemoriesSchema = z.object({
+  hours: z.number().int().min(1).max(8760).optional().default(24).describe("Lookback window in hours"),
+  limit: z.number().int().min(1).max(200).optional().default(20).describe("Maximum results"),
+});
+
+const PruneMemoriesSchema = z.object({}).describe("Re-enforce tier bounds (never deletes)");
+
 const UpdateMemorySchema = z.object({
   id: z.string().uuid().describe("ID of the memory to update"),
   text: z.string().optional().describe("Updated memory text"),
@@ -323,6 +341,10 @@ export class EMEMCPServer {
           { name: "get_memory", description: "Get a specific memory by ID", inputSchema: zodToJsonSchema(GetMemorySchema, schemaOptions) },
           { name: "update_memory", description: "Update an existing memory", inputSchema: zodToJsonSchema(UpdateMemorySchema, schemaOptions) },
           { name: "delete_memory", description: "Delete a memory by ID", inputSchema: zodToJsonSchema(DeleteMemorySchema, schemaOptions) },
+          // Enhanced Protocol (Phase 1)
+          { name: "capture", description: "Classify and store a memory in one call. Auto-detects secrets/immutable artifacts and places it in the right tier.", inputSchema: zodToJsonSchema(CaptureSchema, schemaOptions) },
+          { name: "get_recent_memories", description: "Retrieve memories from the last N hours, newest first. Spans hot/warm/cold tiers.", inputSchema: zodToJsonSchema(GetRecentMemoriesSchema, schemaOptions) },
+          { name: "prune_memories", description: "Re-enforce hot/warm tier bounds by demoting (never deleting). Returns what moved.", inputSchema: zodToJsonSchema(PruneMemoriesSchema, schemaOptions) },
           { name: "create_entities", description: "Create multiple new entities in the knowledge graph", inputSchema: zodToJsonSchema(CreateEntitiesSchema, schemaOptions) },
           { name: "create_relations", description: "Create multiple new relations between entities", inputSchema: zodToJsonSchema(CreateRelationsSchema, schemaOptions) },
           { name: "add_observations", description: "Add new observations to existing entities", inputSchema: zodToJsonSchema(AddObservationsSchema, schemaOptions) },
@@ -452,6 +474,33 @@ export class EMEMCPServer {
           const { id } = DeleteMemorySchema.parse(args);
           await this.memoryManager.deleteMemory(id);
           return { content: [{ type: "text", text: JSON.stringify({ success: true }) }] };
+        }
+
+        // Enhanced Protocol (Phase 1)
+        case "capture": {
+          const parsed = CaptureSchema.parse(args);
+          const result = await this.memoryManager.capture({
+            text: parsed.text,
+            context: parsed.context,
+            priority: parsed.priority,
+            tags: parsed.tags,
+            namespace: parsed.namespace,
+            agentId: parsed.agentId,
+            visibility: parsed.visibility,
+          });
+          return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        }
+
+        case "get_recent_memories": {
+          const { hours, limit } = GetRecentMemoriesSchema.parse(args);
+          const results = this.memoryManager.getRecent(hours, limit);
+          return { content: [{ type: "text", text: JSON.stringify({ results }) }] };
+        }
+
+        case "prune_memories": {
+          PruneMemoriesSchema.parse(args ?? {});
+          const report = this.memoryManager.prune();
+          return { content: [{ type: "text", text: JSON.stringify(report) }] };
         }
 
         case "get_graph": {

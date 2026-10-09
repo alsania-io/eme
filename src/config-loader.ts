@@ -46,6 +46,12 @@ export const minimalDefaults: Config = {
   maxMemoryEntries: 10000,
   similarityThreshold: 0.3,
   logLevel: "info",
+
+  // Enhanced Protocol — tier configuration
+  tierHotLimit: 100,
+  tierWarmLimit: 500,
+  snapshotIntervalMs: 300000,
+  sessionContinuityEnabled: true,
 };
 
 /**
@@ -73,6 +79,20 @@ export function validateConfig(config: Config): string[] {
 
   if (config.memoryGateThreshold < 0 || config.memoryGateThreshold > 1) {
     warnings.push(`memoryGateThreshold ${config.memoryGateThreshold} is outside [0, 1] range.`);
+  }
+
+  // Enhanced Protocol — tier validation
+  if (!Number.isInteger(config.tierHotLimit) || config.tierHotLimit < 1) {
+    warnings.push(`Invalid tierHotLimit: ${config.tierHotLimit}. Must be a positive integer.`);
+  }
+  if (!Number.isInteger(config.tierWarmLimit) || config.tierWarmLimit < 1) {
+    warnings.push(`Invalid tierWarmLimit: ${config.tierWarmLimit}. Must be a positive integer.`);
+  }
+  if (config.tierWarmLimit < config.tierHotLimit) {
+    warnings.push(`tierWarmLimit (${config.tierWarmLimit}) is smaller than tierHotLimit (${config.tierHotLimit}). Warm should exceed hot.`);
+  }
+  if (!Number.isInteger(config.snapshotIntervalMs) || config.snapshotIntervalMs < 1000) {
+    warnings.push(`Invalid snapshotIntervalMs: ${config.snapshotIntervalMs}. Must be an integer >= 1000.`);
   }
 
   return warnings;
@@ -253,6 +273,34 @@ function loadFromEnv(): Partial<Config> {
   }
   if (process.env.LOG_LEVEL) {
     config.logLevel = process.env.LOG_LEVEL as Config["logLevel"];
+  }
+
+  // Enhanced Protocol — tier configuration
+  if (process.env.TIER_HOT_LIMIT) {
+    const parsed = parseInt(process.env.TIER_HOT_LIMIT, 10);
+    if (!isNaN(parsed)) {
+      config.tierHotLimit = parsed;
+    } else {
+      console.warn(`[Config] Invalid TIER_HOT_LIMIT: "${process.env.TIER_HOT_LIMIT}"`);
+    }
+  }
+  if (process.env.TIER_WARM_LIMIT) {
+    const parsed = parseInt(process.env.TIER_WARM_LIMIT, 10);
+    if (!isNaN(parsed)) {
+      config.tierWarmLimit = parsed;
+    } else {
+      console.warn(`[Config] Invalid TIER_WARM_LIMIT: "${process.env.TIER_WARM_LIMIT}"`);
+    }
+  }
+  if (process.env.SNAPSHOT_INTERVAL_MS) {
+    const parsed = parseInt(process.env.SNAPSHOT_INTERVAL_MS, 10);
+    if (!isNaN(parsed)) {
+      config.snapshotIntervalMs = parsed;
+    }
+  }
+  if (process.env.SESSION_CONTINUITY_ENABLED !== undefined) {
+    config.sessionContinuityEnabled =
+      process.env.SESSION_CONTINUITY_ENABLED.toLowerCase() === "true";
   }
 
   return config;

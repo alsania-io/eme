@@ -248,6 +248,54 @@ export interface Config {
     | "huggingface"
     | "openrouter";
   fallbackEmbeddingDimension?: number;
+
+  // Enhanced Protocol — tier configuration
+  tierHotLimit: number;
+  tierWarmLimit: number;
+  snapshotIntervalMs: number;
+  sessionContinuityEnabled: boolean;
+}
+
+// --- Enhanced Protocol types (Phase 1) ---
+
+/** Memory tier. hot = in-process Map; warm = SQLite; cold = Qdrant only. */
+export type Tier = "hot" | "warm" | "cold";
+
+/**
+ * Data classes routed by the storage router.
+ * Phase 1 only classifies; Phase 2+ routes to backends.
+ */
+export type DataClass =
+  | "immutable"
+  | "archive"
+  | "vector"
+  | "secret"
+  | "mirror"
+  | "disposable";
+
+/** Auto-capture request — maps onto addMemory with a classified data class. */
+export interface CaptureRequest {
+  text: string;
+  context?: string;
+  priority?: "high" | "medium" | "low";
+  tags?: string[];
+  namespace?: string;
+  agentId?: string;
+  visibility?: "private" | "shared" | "system";
+}
+
+/** Result of classifying a capture request. */
+export interface CaptureClassification {
+  dataClass: DataClass;
+  tier: Tier;
+  priority: "high" | "medium" | "low";
+  shouldSave: boolean;
+  reason: string;
+}
+
+/** A tier-aware search result carries which tier it came from. */
+export interface TieredSearchResult extends SearchResult {
+  tier: Tier;
 }
 
 // MCP Server Request/Response Types
