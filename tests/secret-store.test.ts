@@ -18,6 +18,7 @@ import os from "os";
 import { execFileSync } from "child_process";
 import { SecretStore, denyAll, CanAccess } from "../src/secret-store.js";
 import { RcloneBackend } from "../src/rclone-backend.js";
+import { resolveConfigSecrets, dispatchSecretTool } from "../src/secret-tools.js";
 
 const RCLONE_CONF = path.join(os.tmpdir(), "eme-it-rclone.conf");
 
@@ -121,5 +122,33 @@ describe("SecretStore (real crypt remote)", () => {
     const idx = await fs.readFile(path.join(base, "secrets-index.json"), "utf-8");
     expect(idx).not.toContain("top-secret-redaction-check");
     expect(idx).toContain("REDACT_ME");
+  });
+
+  test("resolveConfigSecrets fills stored tokens, env-won tokens untouched", async () => {
+    await store.put("FILL_ME", "filled-value", { namespace: "default" });
+    const out = await resolveConfigSecrets(
+      { a: "keep=${FILL_ME}", b: "already=plain", c: ["x=${MISSING_TOKEN}"] },
+      store,
+    );
+    expect(out.a).toBe("keep=filled-value");
+    expect(out.b).toBe("already=plain");
+    // Token not in store (env already consumed it, or absent) stays verbatim.
+    expect(out.c[0]).toBe("x=${MISSING_TOKEN}");
+  });
+
+  test("read_secret via dispatch denies by default (no existence disclosure)", async () => {
+    await store.put("DENIED_SECRET", "never-returned", { namespace: "default" });
+    const res = await dispatchSecretTool(
+      "read_secret",
+      { name: "DENIED_SECRET", namespace: "default", agentId: "agent-1" },
+      store,
+    );
+    expect(res).not.toBeNull();
+    expect((res as any).isError).toBe(true);
+    const body = JSON.parse((res as any).content[0].text);
+    expect(body.error).toBe("access denied");
+    // No value, no name echo.
+    expect(JSON.stringify(res)).not.toContain("never-returned");
+    expect(JSON.stringify(res)).not.toContain("DENIED_SECRET");
   });
 });

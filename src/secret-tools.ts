@@ -31,6 +31,35 @@ export function secretToolDefinitions() {
 export const SECRET_TOOL_NAMES = ["read_secret"] as const;
 
 /**
+ * Async post-step: walk a config object and resolve any UNRESOLVED `${NAME}`
+ * tokens from the SecretStore. Env expansion is expected to have already run,
+ * so any token still shaped like `${...}` here is a candidate secret reference.
+ * Env values (already substituted) win because they are no longer `${...}`.
+ *
+ * Kept out of loadConfig() to preserve its sync contract. Returns a deep copy.
+ */
+export async function resolveConfigSecrets<T>(
+  config: T,
+  store: SecretStore,
+): Promise<T> {
+  const walk = async (v: any): Promise<any> => {
+    if (typeof v === "string") return store.resolve(v);
+    if (Array.isArray(v)) {
+      const out: any[] = [];
+      for (const item of v) out.push(await walk(item));
+      return out;
+    }
+    if (v && typeof v === "object") {
+      const out: Record<string, any> = {};
+      for (const [k, val] of Object.entries(v)) out[k] = await walk(val);
+      return out;
+    }
+    return v;
+  };
+  return (await walk(config)) as T;
+}
+
+/**
  * Dispatch the read_secret verb. Returns MCP-shaped content, or null if the
  * verb isn't owned here (core falls through).
  *

@@ -16,6 +16,12 @@ import {
   dispatchRouterTool,
   ROUTER_TOOL_NAMES,
 } from "./router-tools.js";
+import { SecretStore } from "./secret-store.js";
+import {
+  secretToolDefinitions,
+  dispatchSecretTool,
+  SECRET_TOOL_NAMES,
+} from "./secret-tools.js";
 
 // Schema definitions with proper validation
 const AddMemorySchema = z.object({
@@ -299,6 +305,7 @@ export class EMEMCPServer {
   private localRAG: LocalRAG | null = null;
   private largeFileHandler: LargeFileHandler | null = null;
   private storageRouter: StorageRouter;
+  private secretStore: SecretStore | null = null;
   private config: Config;
 
   // Keys that require full reinitialize when changed
@@ -338,6 +345,28 @@ export class EMEMCPServer {
       },
     );
     this.setupToolHandlers();
+  }
+
+  /**
+   * Lazily construct the SecretStore. Returns null if no secret destination is
+   * configured — read_secret then registers but always denies (graceful).
+   */
+  private getSecretStore(): SecretStore | null {
+    if (this.secretStore) return this.secretStore;
+    try {
+      const cryptRemote =
+        (this.config as any).secretCryptRemote ??
+        ((this.config.destinations ?? []).find((d) => d.role === "secret" && d.remote)?.remote);
+      if (!cryptRemote) return null;
+      this.secretStore = new SecretStore({
+        cryptRemote,
+        localPath: (this.config as any).secretPath ?? "./storage/secrets",
+        rcloneConfigPath: this.config.rcloneConfigPath,
+      });
+      return this.secretStore;
+    } catch {
+      return null;
+    }
   }
 
   private setupToolHandlers(): void {
@@ -390,6 +419,8 @@ export class EMEMCPServer {
           { name: "stream_large_file", description: "Stream a large file in chunks. Returns multiple chunks for processing very large files efficiently.", inputSchema: zodToJsonSchema(StreamLargeFileSchema, schemaOptions) },
           // Storage Router (Phase 2b) — contributed via the tool-registrar seam
           ...routerToolDefinitions(),
+          // Secrets (Phase 3) — same registrar seam; deny-by-default
+          ...secretToolDefinitions(),
         ],
       };
     });
@@ -425,6 +456,16 @@ export class EMEMCPServer {
         // Storage Router verbs (Phase 2b) — delegated to the registrar seam.
         if ((ROUTER_TOOL_NAMES as readonly string[]).includes(name)) {
           const routed = await dispatchRouterTool(name, args, this.storageRouter);
+          if (routed) return routed;
+        }
+
+        // Secrets verbs (Phase 3) — same seam; deny-by-default.
+        if ((SECRET_TOOL_NAMES as readonly string[]).includes(name)) {
+          const store = this.getSecretStore();
+          if (!store) {
+            return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "access denied" }) }] };
+          }
+          const routed = await dispatchSecretTool(name, args, store);
           if (routed) return routed;
         }
 
