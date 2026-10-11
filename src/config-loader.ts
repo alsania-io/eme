@@ -52,6 +52,11 @@ export const minimalDefaults: Config = {
   tierWarmLimit: 500,
   snapshotIntervalMs: 300000,
   sessionContinuityEnabled: true,
+
+  // Storage Router (Phase 2b) — empty on fresh install (Amd 1 §2)
+  destinations: [],
+  routing: [],
+  rcloneConfigPath: "./storage/rclone.conf",
 };
 
 /**
@@ -95,6 +100,29 @@ export function validateConfig(config: Config): string[] {
     warnings.push(`Invalid snapshotIntervalMs: ${config.snapshotIntervalMs}. Must be an integer >= 1000.`);
   }
 
+  // Storage Router (Phase 2b)
+  if (config.destinations !== undefined && !Array.isArray(config.destinations)) {
+    warnings.push(`destinations must be an array (got ${typeof config.destinations}).`);
+  }
+  if (config.routing !== undefined && !Array.isArray(config.routing)) {
+    warnings.push(`routing must be an array (got ${typeof config.routing}).`);
+  }
+  const destIds = new Set((config.destinations ?? []).map((d: any) => d?.id).filter(Boolean));
+  for (const rule of config.routing ?? []) {
+    if (rule?.primary && !destIds.has(rule.primary) && destIds.size > 0) {
+      warnings.push(`routing rule '${rule.id}' references unknown destination '${rule.primary}'.`);
+    }
+    // No credential material may live inline on a rule/destination.
+    if (rule && "password" in rule) {
+      warnings.push(`routing rule '${rule.id}' contains a 'password' field — credentials are not allowed inline.`);
+    }
+  }
+  for (const d of config.destinations ?? []) {
+    if (d && ("password" in d || "token" in d || "apiKey" in d)) {
+      warnings.push(`destination '${d.id}' contains inline credential material — not allowed. Use rclone.conf or \${VAR}.`);
+    }
+  }
+
   return warnings;
 }
 
@@ -123,6 +151,23 @@ export function loadConfig(configPath?: string): Config {
 
   // 3. Environment variables have HIGHEST priority
   config = { ...config, ...loadFromEnv() };
+
+  // 4. Storage Router (Phase 2b): reconcile the `storageRouter` config-file
+  //    block into the flat Config fields the router reads. ONE config system —
+  //    the block is just a namespaced spelling of destinations/routing/conf.
+  const rawAny = config as any;
+  if (rawAny.storageRouter && typeof rawAny.storageRouter === "object") {
+    const sr = rawAny.storageRouter;
+    if (Array.isArray(sr.destinations) && sr.destinations.length > 0) {
+      config.destinations = sr.destinations;
+    }
+    if (Array.isArray(sr.rules) && sr.rules.length > 0) {
+      config.routing = sr.rules;
+    }
+    if (typeof sr.rcloneConfigPath === "string") {
+      config.rcloneConfigPath = sr.rcloneConfigPath;
+    }
+  }
 
   // Validate and warn
   const warnings = validateConfig(config as Config);

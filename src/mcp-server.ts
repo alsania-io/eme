@@ -10,6 +10,12 @@ import { createMemoryManager, MemoryManager } from "./memory-manager.js";
 import type { Config } from "./types.js";
 import { LocalRAG } from "./local-rag.js";
 import { LargeFileHandler } from "./large-file.js";
+import { StorageRouter } from "./storage-router.js";
+import {
+  routerToolDefinitions,
+  dispatchRouterTool,
+  ROUTER_TOOL_NAMES,
+} from "./router-tools.js";
 
 // Schema definitions with proper validation
 const AddMemorySchema = z.object({
@@ -292,6 +298,7 @@ export class EMEMCPServer {
   private memoryManager: MemoryManager | null = null;
   private localRAG: LocalRAG | null = null;
   private largeFileHandler: LargeFileHandler | null = null;
+  private storageRouter: StorageRouter;
   private config: Config;
 
   // Keys that require full reinitialize when changed
@@ -316,6 +323,9 @@ export class EMEMCPServer {
 
   constructor(config: Config) {
     this.config = config;
+    // Phase 2b: storage router is constructed eagerly (cheap — no I/O); rclone
+    // binary is only touched when a router verb actually runs.
+    this.storageRouter = new StorageRouter(config);
     this.server = new Server(
       {
         name: "eme-mcp-server",
@@ -378,6 +388,8 @@ export class EMEMCPServer {
           { name: "navigate_to_line", description: "Jump to a specific line in a large file with surrounding context lines.", inputSchema: zodToJsonSchema(NavigateToLineSchema, schemaOptions) },
           { name: "get_file_summary", description: "Get comprehensive statistical summary of a file including line stats, character stats, and word count.", inputSchema: zodToJsonSchema(GetFileSummarySchema, schemaOptions) },
           { name: "stream_large_file", description: "Stream a large file in chunks. Returns multiple chunks for processing very large files efficiently.", inputSchema: zodToJsonSchema(StreamLargeFileSchema, schemaOptions) },
+          // Storage Router (Phase 2b) — contributed via the tool-registrar seam
+          ...routerToolDefinitions(),
         ],
       };
     });
@@ -408,6 +420,12 @@ export class EMEMCPServer {
 
         if (!this.largeFileHandler) {
           this.largeFileHandler = new LargeFileHandler();
+        }
+
+        // Storage Router verbs (Phase 2b) — delegated to the registrar seam.
+        if ((ROUTER_TOOL_NAMES as readonly string[]).includes(name)) {
+          const routed = await dispatchRouterTool(name, args, this.storageRouter);
+          if (routed) return routed;
         }
 
         switch (name) {

@@ -39,6 +39,12 @@ export const CONFIG_CATEGORIES = [
     description: 'Structured relationship tracking between entities, tasks, and agents.'
   },
   {
+    id: 'storage-router',
+    label: 'Storage Router',
+    icon: '🔀',
+    description: 'Destinations, pools, and routing rules for memory lifecycle.'
+  },
+  {
     id: 'snapshots',
     label: 'Snapshots & Backup',
     icon: '📦',
@@ -318,6 +324,37 @@ export const CONFIG_FIELDS = [
     default: './storage/snapshots',
     placeholder: './storage/snapshots',
     description: 'Local directory path where snapshot bundles and manifests are kept.',
+    advanced: false
+  },
+  // Storage Router (Phase 2b)
+  {
+    key: 'storageRouterDestinations',
+    category: 'storage-router',
+    label: 'Destinations (JSON)',
+    type: 'text',
+    default: '[]',
+    placeholder: '[{"id":"mega-pool","kind":"rclone","role":"archive","remotes":["mega1:","mega2:"]}]',
+    description: 'JSON array of storage destinations. Credentials are NEVER inline — use EME rclone.conf or ${VAR}.',
+    advanced: false
+  },
+  {
+    key: 'storageRouterRules',
+    category: 'storage-router',
+    label: 'Routing Rules (JSON)',
+    type: 'text',
+    default: '[]',
+    placeholder: '[{"id":"archive","match":{"dataClass":"archive"},"primary":"mega-pool","verify":"hash","encrypt":false}]',
+    description: 'JSON array of routing rules. First match wins, most-specific first. Empty = seeded defaults.',
+    advanced: false
+  },
+  {
+    key: 'storageRouterDefaultPoolStrategy',
+    category: 'storage-router',
+    label: 'Default Pool Strategy',
+    type: 'select',
+    default: 'round-robin',
+    options: ['round-robin', 'shard', 'failover'],
+    description: 'How multi-remote pools select a target when a destination omits poolStrategy.',
     advanced: false
   },
   // System & Security
