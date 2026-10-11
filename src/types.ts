@@ -219,7 +219,7 @@ export interface Config {
   graphStorePath?: string;
 
   // Snapshot configuration
-  snapshotStore: "filesystem" | "ipfs" | "drive" | "s3" | "filebase";
+  snapshotStore: "filesystem" | "ipfs" | "drive" | "s3" | "filebase" | "rclone";
   snapshotPath?: string;
   snapshotConfig?: IPFSConfig;
 
@@ -254,6 +254,11 @@ export interface Config {
   tierWarmLimit: number;
   snapshotIntervalMs: number;
   sessionContinuityEnabled: boolean;
+
+  // Storage Router (Phase 2b) — destinations, routing rules, EME-managed conf
+  destinations?: Destination[];
+  routing?: RoutingRule[];
+  rcloneConfigPath?: string;
 }
 
 // --- Enhanced Protocol types (Phase 1) ---
@@ -272,6 +277,71 @@ export type DataClass =
   | "secret"
   | "mirror"
   | "disposable";
+
+// --- Storage Router types (Phase 2b) ---
+// Reconciled from .tasks/002 (structure) + docs/EME_ROUTER_MODEL_2a.md (shapes,
+// signed off 2026-10-10). The 2a model wins on type shape where they differ:
+// kind includes "ipfs" (for filebase-pin), and destinations use remote/remotes/
+// poolStrategy rather than a generic `backend` field. No credential ever appears
+// on a Destination — rclone creds live in EME's rclone.conf; ipfs tokens resolve
+// via ${VAR}.
+
+export type DestinationKind = "rclone" | "ipfs" | "qdrant" | "local";
+export type DestinationRole = DataClass; // reuse existing vocabulary
+export type PoolStrategy = "round-robin" | "shard" | "failover";
+
+export interface DestinationHealth {
+  ok: boolean;
+  lastCheck?: number;
+  latencyMs?: number;
+  freeBytes?: number;
+}
+
+export interface Destination {
+  id: string;                       // "mega-pool", "filebase-pin", "filebase-s3"
+  kind: DestinationKind;
+  role: DestinationRole;
+
+  // kind=rclone
+  remote?: string;                  // name in EME's rclone.conf, e.g. "mega-pool:"
+  remotes?: string[];               // pool members ["mega1:","mega2:",...]
+  poolStrategy?: PoolStrategy;
+
+  // kind=ipfs (existing ipfs-store)
+  ipfs?: IPFSConfig;                // reuse existing IPFSConfig shape
+
+  // kind=qdrant | local
+  url?: string;
+  path?: string;
+
+  health: DestinationHealth;
+  config: Record<string, unknown>;  // NON-SECRET options only
+}
+
+export interface RoutingRule {
+  id: string;
+  match: {
+    dataClass?: DataClass;
+    tagsAny?: string[];             // e.g. route:immutable
+    namespace?: string;
+    visibility?: "private" | "shared" | "system";
+    tier?: Tier;
+  };
+  primary: string;                  // destination id
+  secondary?: string[];             // replication (e.g. pin + archive)
+  verify: "hash" | "none";
+  encrypt: boolean;                 // rclone crypt (secrets)
+}
+
+/** Resolved routing decision for a payload. */
+export interface ResolvedRoute {
+  primary: Destination;
+  secondary: Destination[];
+  verify: "hash" | "none";
+  encrypt: boolean;
+  ruleId: string;
+  reason: string;
+}
 
 /** Auto-capture request — maps onto addMemory with a classified data class. */
 export interface CaptureRequest {

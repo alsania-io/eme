@@ -30,6 +30,13 @@ storage/api-keys.json
 storage/snapshots/*
 !storage/snapshots/snapshots.json
 
+# Storage Router (Phase 2b) — EME-managed rclone config may hold obscured
+# credentials. NEVER commit it. (secret-scan rule, EME b9a9de15)
+storage/rclone.conf
+storage/rclone.conf.bak-*
+*.rclone.conf
+!storage/rclone.conf.example
+
 # IDE
 .vscode/
 .idea/

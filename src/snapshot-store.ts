@@ -215,6 +215,31 @@ export async function createSnapshotStore(
         `Snapshot store ${config.snapshotStore} not yet implemented`,
       );
 
+    case "rclone": {
+      // Phase 2b: rclone-backed snapshots via the storage router substrate.
+      // Remote comes from snapshotConfig.ipfsGateway-style override, else a
+      // dedicated rcloneRemote in snapshotConfig; local staging reuses
+      // snapshotPath.
+      const cfgAny = config as any;
+      const remote =
+        cfgAny.snapshotConfig?.rcloneRemote ?? cfgAny.rcloneSnapshotRemote;
+      if (!remote) {
+        throw new Error(
+          "snapshotStore='rclone' requires snapshotConfig.rcloneRemote (e.g. 'mega-pool:eme-snapshots')",
+        );
+      }
+      const { RcloneDestinationStore } = await import(
+        "./rclone-destination-store.js"
+      );
+      const store = new RcloneDestinationStore({
+        remote,
+        localPath: config.snapshotPath || "./storage/snapshots",
+        rcloneConfigPath: cfgAny.rcloneConfigPath,
+      });
+      await store.initialize();
+      return store;
+    }
+
     default:
       throw new Error(`Unknown snapshot store: ${config.snapshotStore}`);
   }

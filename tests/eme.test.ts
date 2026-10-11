@@ -18,6 +18,11 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
     maxMemoryEntries: 10000,
     similarityThreshold: 0.1,
     logLevel: 'error',
+    // Enhanced Protocol (Phase 1) required fields
+    tierHotLimit: 100,
+    tierWarmLimit: 500,
+    snapshotIntervalMs: 300000,
+    sessionContinuityEnabled: true,
     ...overrides,
   };
 }
@@ -157,6 +162,10 @@ describe('Config System', () => {
       maxMemoryEntries: 10000,
       similarityThreshold: 0.3,
       logLevel: 'info',
+      tierHotLimit: 100,
+      tierWarmLimit: 500,
+      snapshotIntervalMs: 300000,
+      sessionContinuityEnabled: true,
     });
     expect(warnings.length).toBeGreaterThanOrEqual(3);
   });
