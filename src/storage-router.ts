@@ -386,11 +386,25 @@ export class StorageRouter {
     }
     const start = Date.now();
     const about = await this.rclone.about(remote);
+    let ok = about.ok;
+    let freeBytes = about.freeBytes;
+
+    // Fallback: some backends (S3-compatible: Filebase, MinIO) don't support
+    // `about`. A shallow directory listing is an equally valid reachability
+    // signal, so probe instead of reporting a false negative.
+    if (!ok) {
+      const probe = await this.rclone.probe(remote);
+      if (probe.ok) {
+        ok = true;
+        freeBytes = undefined; // unknown for backends without quota reporting
+      }
+    }
+
     const h: DestinationHealth = {
-      ok: about.ok,
+      ok,
       lastCheck: Date.now(),
       latencyMs: Date.now() - start,
-      freeBytes: about.freeBytes,
+      freeBytes,
     };
     this.registry.setHealth(id, h);
     return h;

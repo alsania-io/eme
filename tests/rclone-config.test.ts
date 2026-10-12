@@ -53,14 +53,30 @@ describe("RcloneConfig.writeRemote", () => {
     expect(remote?.type).toBe("local");
   });
 
-  test("accepts a \${VAR} reference for a secret-shaped param", () => {
-    const r = conf.writeRemote("s3", "s3", {
-      provider: "Other",
-      access_key_id: "\${FILEBASE_ACCESS_KEY}",
-      secret_access_key: "\${FILEBASE_SECRET_KEY}",
-    });
-    expect(r.ok).toBe(true);
-    expect(conf.get("s3")?.params.access_key_id).toBe("\${FILEBASE_ACCESS_KEY}");
+  test("resolves a \${VAR} reference from process.env into the conf", () => {
+    process.env.FILEBASE_ACCESS_KEY = "AKIATESTACCESSKEY";
+    process.env.FILEBASE_SECRET_KEY = "testsecretvalue123";
+    try {
+      const r = conf.writeRemote("s3", "s3", {
+        provider: "Other",
+        access_key_id: "\${FILEBASE_ACCESS_KEY}",
+        secret_access_key: "\${FILEBASE_SECRET_KEY}",
+      });
+      expect(r.ok).toBe(true);
+      // Resolved into the (600-perm) conf — rclone does not expand vars itself.
+      expect(conf.get("s3")?.params.access_key_id).toBe("AKIATESTACCESSKEY");
+      expect(conf.get("s3")?.params.secret_access_key).toBe("testsecretvalue123");
+    } finally {
+      delete process.env.FILEBASE_ACCESS_KEY;
+      delete process.env.FILEBASE_SECRET_KEY;
+    }
+  });
+
+  test("refuses a \${VAR} reference whose env var is unset", () => {
+    delete process.env.NOPE_MISSING_VAR;
+    const r = conf.writeRemote("s3b", "s3", { provider: "Other", access_key_id: "\${NOPE_MISSING_VAR}" });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/unset environment variable/i);
   });
   test("REJECTS an inline secret literal (no \${VAR}, not obscured)", () => {
     const r = conf.writeRemote("bad", "s3", { secret_access_key: "AKIALITERALSECRET123" });

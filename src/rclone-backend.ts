@@ -220,6 +220,17 @@ export class RcloneBackend {
   }
 
   /**
+   * Lightweight reachability probe for backends that don't support `about`
+   * (e.g. S3-compatible stores like Filebase). Lists the remote root with a
+   * shallow depth; ok=true if the listing succeeds.
+   */
+  async probe(remote: string, rcloneConfigPath?: string): Promise<RcloneResult> {
+    const args = ["lsd", remote, "--max-depth", "1"];
+    if (rcloneConfigPath) args.push("--config", rcloneConfigPath);
+    return this.run(args, 30000);
+  }
+
+  /**
    * Create a crypt remote over an existing remote. The password/obscured form is
    * passed directly to rclone's `config create`; it is NEVER logged here.
    * For Phase 3 (secrets). Returns the obscured password on success.

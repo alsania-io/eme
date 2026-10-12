@@ -118,12 +118,45 @@ export class RcloneConfig {
     const bad = this.validateParams(type, params);
     if (bad) return { ok: false, error: bad };
 
+    // Resolve ${VAR} references from process.env BEFORE writing. rclone does not
+    // expand variables itself; the 600-perm conf is the secret store (this is
+    // how rclone expects credentials). Input must NOT contain inline literals
+    // for secret-shaped keys (validateParams already enforced that).
+    let resolved: Record<string, string>;
+    try {
+      resolved = this.resolveVars(params);
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) };
+    }
+
     this.ensureConfig();
     const backup = this.backup();
     const remotes = this.read().filter((r) => r.name !== name);
-    remotes.push({ name, type, params });
+    remotes.push({ name, type, params: resolved });
     this.atomicWrite(remotes);
     return { ok: true, backup };
+  }
+
+  /**
+   * Expand ${VAR} references in param values from process.env. A reference whose
+   * variable is UNSET is returned as a sentinel error so callers don't write a
+   * broken remote. Non-${...} values pass through unchanged.
+   */
+  private resolveVars(params: Record<string, string>): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params)) {
+      const m = /^\$\{([A-Z0-9_]+)\}$/.exec(v);
+      if (m) {
+        const val = process.env[m[1]];
+        if (val === undefined || val === "") {
+          throw new Error(`unset environment variable '${m[1]}' for rclone param '${k}'`);
+        }
+        out[k] = val;
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
   }
 
   /**
