@@ -78,3 +78,7 @@ mcp-config.json
 # Python artifacts
 *.pyc
 __pycache__/
+
+# Local instance config — may hold ${VAR} refs / operator overrides; never commit.
+storage/eme-config.json
+eme-config.json
