@@ -85,10 +85,16 @@ function setActiveCategory(catId) {
   document.getElementById('panel-overview').style.display = catId === 'overview' ? 'block' : 'none';
   document.getElementById('panel-playground').style.display = catId === 'playground' ? 'block' : 'none';
   document.getElementById('panel-raw').style.display = catId === 'raw' ? 'block' : 'none';
+  document.getElementById('panel-storage-router').style.display = catId === 'storage-router' ? 'block' : 'none';
   
-  const isDynamic = !['overview', 'playground', 'raw'].includes(catId);
+  const isDynamic = !['overview', 'playground', 'raw', 'storage-router'].includes(catId);
   document.getElementById('panel-dynamic-form').style.display = isDynamic ? 'block' : 'none';
   
+  if (catId === 'storage-router') {
+    renderStoragePanel();
+    return;
+  }
+
   if (isDynamic) {
     const catObj = CONFIG_CATEGORIES.find(c => c.id === catId);
     elements.dynamicPanelTitle.textContent = `${catObj.icon} ${catObj.label}`;
@@ -368,6 +374,102 @@ async function executeAddMemory() {
   } catch (err) {
     out.textContent = `Add failed: ${err.message}`;
   }
+}
+
+// --- Storage Router Panel (Phase 5) ---
+
+function fmtBytes(n) {
+  if (n === undefined || n === null || isNaN(n)) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+}
+
+async function callTool(name, args = {}) {
+  const res = await fetch(`${state.serverEndpoint}/api/tools/${name}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args)
+  });
+  const raw = await res.json();
+  // MCP-shaped: { content: [{ type:'text', text }] }
+  if (raw && Array.isArray(raw.content) && raw.content[0] && typeof raw.content[0].text === 'string') {
+    try { return JSON.parse(raw.content[0].text); } catch { return raw.content[0].text; }
+  }
+  return raw;
+}
+
+async function loadDestinations(verbose = true) {
+  const el = document.getElementById('destinationsList');
+  el.textContent = 'Loading destinations…';
+  try {
+    const data = await callTool('destination_list', { verbose });
+    const list = data?.destinations || [];
+    if (list.length === 0) {
+      el.innerHTML = '<em>No destinations registered yet. Add one via the JSON editor below or the router verbs.</em>';
+      return;
+    }
+    const rows = list.map(d => {
+      const ok = d.ok ?? d.health?.ok;
+      const badge = ok ? '🟢' : '⚪';
+      const kind = d.kind ? `<span style="color:var(--text-muted);">(${d.kind}/${d.role})</span>` : '';
+      const health = d.health
+        ? `latency ${d.health.latencyMs != null ? d.health.latencyMs + 'ms' : '—'} · free ${fmtBytes(d.health.freeBytes)}`
+        : (d.role ? '' : '');
+      return `<div style="padding:0.5rem 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+        ${badge} <strong>${d.id}</strong> ${kind}
+        <button class="btn btn-secondary" style="float:right; font-size:0.7rem; padding:0.2rem 0.6rem;" data-test="${d.id}">Test</button>
+        ${health ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.25rem;">${health}</div>` : ''}
+      </div>`;
+    }).join('');
+    el.innerHTML = rows;
+    el.querySelectorAll('[data-test]').forEach(btn => {
+      btn.onclick = () => testDestination(btn.getAttribute('data-test'));
+    });
+  } catch (err) {
+    el.textContent = `Failed to list destinations: ${err.message}`;
+  }
+}
+
+async function testDestination(id) {
+  showToast(`Probing ${id}…`, 'info');
+  try {
+    const data = await callTool('destination_test', { id });
+    showToast(`${id}: ${data?.health?.ok ? 'reachable' : 'unreachable'}`, data?.health?.ok ? 'success' : 'error');
+    loadDestinations(true);
+  } catch (err) {
+    showToast(`Test failed: ${err.message}`, 'error');
+  }
+}
+
+async function runRouteDryrun() {
+  const out = document.getElementById('dryrunOutput');
+  out.textContent = 'Resolving route…';
+  const tags = document.getElementById('dryrunTags').value.split(',').map(t => t.trim()).filter(Boolean);
+  const args = {
+    text: document.getElementById('dryrunText').value || undefined,
+    tags: tags.length ? tags : undefined,
+    namespace: document.getElementById('dryrunNamespace').value || undefined
+  };
+  try {
+    const data = await callTool('route_dryrun', args);
+    out.textContent = JSON.stringify(data, null, 2);
+    showToast(`Routes to ${data?.primary} (rule: ${data?.ruleId})`, 'success');
+  } catch (err) {
+    out.textContent = `Dry-run failed: ${err.message}`;
+  }
+}
+
+async function renderStoragePanel() {
+  // Wire the panel's buttons each time it's shown (idempotent).
+  const refresh = document.getElementById('btnRefreshDestinations');
+  if (refresh) refresh.onclick = () => loadDestinations(true);
+  const dry = document.getElementById('btnRouteDryrun');
+  if (dry) dry.onclick = runRouteDryrun;
+  const raw = document.getElementById('btnEditRouterRaw');
+  if (raw) raw.onclick = () => setActiveCategory('raw');
+  await loadDestinations(true);
 }
 
 // Setup Event Listeners and Initialize

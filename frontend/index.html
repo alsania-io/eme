@@ -158,6 +158,51 @@
         </div>
       </section>
 
+      <!-- Storage Router Panel (Phase 5) -->
+      <section class="panel-view" id="panel-storage-router" style="display: none;">
+        <div class="panel-header">
+          <h2>🔀 Storage Router — Destinations & Routing</h2>
+          <p>Live destination health, routing rules, and route dry-run. Credentials live in EME's rclone.conf — never here.</p>
+        </div>
+
+        <!-- Destinations -->
+        <div class="playground-section">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="color:#fff; margin-bottom:0.5rem;">🗄️ Destinations</h3>
+            <button class="btn btn-secondary" id="btnRefreshDestinations"><span>🔄</span> Refresh</button>
+          </div>
+          <div id="destinationsList" class="playground-results">Loading destinations…</div>
+        </div>
+
+        <!-- Routing Dry-Run -->
+        <div class="playground-section">
+          <h3 style="color:#fff; margin-bottom:0.5rem;">🧭 Route Dry-Run</h3>
+          <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+            Show which destination a payload WOULD hit — writes nothing.
+          </p>
+          <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap;">
+            <input type="text" class="form-control" id="dryrunText" placeholder="Payload text (drives data-class detection)…" style="flex:1; min-width:220px;">
+            <input type="text" class="form-control" id="dryrunTags" placeholder="tags (comma-sep)" style="max-width:200px;">
+            <input type="text" class="form-control" id="dryrunNamespace" placeholder="namespace" style="max-width:160px;">
+            <button class="btn btn-primary" id="btnRouteDryrun">Dry-Run</button>
+          </div>
+          <div id="dryrunOutput" class="playground-results">Route decision will appear here…</div>
+        </div>
+
+        <!-- Secrets (metadata only) -->
+        <div class="playground-section">
+          <h3 style="color:#fff; margin-bottom:0.5rem;">🔐 Secrets (metadata only)</h3>
+          <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+            Names + namespaces only — values are never displayed or indexed.
+          </p>
+          <div id="secretsList" class="playground-results">Secret names are not listed by this panel (deny-by-default).</div>
+        </div>
+
+        <div style="margin-top:1rem;">
+          <button class="btn btn-secondary" id="btnEditRouterRaw"><span>📝</span> Edit destinations/rules as JSON</button>
+        </div>
+      </section>
+
       <!-- Raw JSON Editor Panel -->
       <section class="panel-view" id="panel-raw" style="display: none;">
         <div class="panel-header">
