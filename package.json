@@ -53,6 +53,7 @@
     "dist"
   ],
   "dependencies": {
+    "@alsania-io/acl": "file:../echo-sys/packages/acl",
     "@dbml/core": "^6.3.0",
     "@exodus/bytes": "^1.14.1",
     "@helia/dag-cbor": "^5.0.7",

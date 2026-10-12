@@ -19,6 +19,8 @@ import {
   ROUTER_TOOL_NAMES,
 } from "./router-tools.js";
 import { SecretStore } from "./secret-store.js";
+import { Acl } from "@alsania-io/acl";
+import { aclCanAccess } from "./acl-bridge.js";
 import {
   secretToolDefinitions,
   dispatchSecretTool,
@@ -308,6 +310,8 @@ export class EMEMCPServer {
   private largeFileHandler: LargeFileHandler | null = null;
   private storageRouter: StorageRouter;
   private secretStore: SecretStore | null = null;
+  /** Phase 4: shared ACL (@alsania-io/acl). Default-deny until entries load. */
+  private acl: Acl = new Acl();
   private config: Config;
 
   // Keys that require full reinitialize when changed
@@ -360,11 +364,15 @@ export class EMEMCPServer {
         (this.config as any).secretCryptRemote ??
         ((this.config.destinations ?? []).find((d) => d.role === "secret" && d.remote)?.remote);
       if (!cryptRemote) return null;
-      this.secretStore = new SecretStore({
-        cryptRemote,
-        localPath: (this.config as any).secretPath ?? "./storage/secrets",
-        rcloneConfigPath: this.config.rcloneConfigPath,
-      });
+      this.secretStore = new SecretStore(
+        {
+          cryptRemote,
+          localPath: (this.config as any).secretPath ?? "./storage/secrets",
+          rcloneConfigPath: this.config.rcloneConfigPath,
+        },
+        // Phase 4: real ACL enforcement via @alsania-io/acl (default-deny).
+        { canAccess: aclCanAccess(this.acl) },
+      );
       return this.secretStore;
     } catch {
       return null;
