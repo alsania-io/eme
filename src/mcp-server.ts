@@ -11,6 +11,8 @@ import type { Config } from "./types.js";
 import { LocalRAG } from "./local-rag.js";
 import { LargeFileHandler } from "./large-file.js";
 import { StorageRouter } from "./storage-router.js";
+import { RcloneConfig } from "./rclone-config.js";
+import { saveConfig } from "./config-loader.js";
 import {
   routerToolDefinitions,
   dispatchRouterTool,
@@ -455,7 +457,19 @@ export class EMEMCPServer {
 
         // Storage Router verbs (Phase 2b) — delegated to the registrar seam.
         if ((ROUTER_TOOL_NAMES as readonly string[]).includes(name)) {
-          const routed = await dispatchRouterTool(name, args, this.storageRouter);
+          const rcloneConfig = this.config.rcloneConfigPath
+            ? new RcloneConfig(this.config.rcloneConfigPath)
+            : undefined;
+          const deps = {
+            rcloneConfig,
+            persist: (destinations: Config["destinations"]) => {
+              // Update the live config so subsequent reads reflect the change,
+              // then write it to disk atomically (never-delete: backup first).
+              this.config.destinations = destinations;
+              return saveConfig(this.config);
+            },
+          };
+          const routed = await dispatchRouterTool(name, args, this.storageRouter, deps);
           if (routed) return routed;
         }
 

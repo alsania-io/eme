@@ -11,6 +11,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { Config, Destination } from "./types.js";
 import { StorageRouter } from "./storage-router.js";
+import { RcloneConfig } from "./rclone-config.js";
 
 const schemaOptions = { target: "jsonSchema7" as const } as any;
 
@@ -72,10 +73,22 @@ export const ROUTER_TOOL_NAMES = [
  * Dispatch a router verb. Returns MCP-shaped content, or null if the verb is
  * not owned by this registrar (so core can fall through).
  */
+/**
+ * Persistence seam for destination_add/remove. Core injects this so the
+ * registrar never imports the config writer directly (Amendment 2: the
+ * registrar does not edit core, and core does not hardcode registrar logic).
+ * `persist` receives the UPDATED destination list to write back to Config.
+ */
+export interface RouterDispatchDeps {
+  persist?: (destinations: Destination[]) => { ok: boolean; path?: string; backup?: string | null; error?: string };
+  rcloneConfig?: RcloneConfig;
+}
+
 export async function dispatchRouterTool(
   name: string,
   args: any,
   router: StorageRouter,
+  deps: RouterDispatchDeps = {},
 ): Promise<{ content: Array<{ type: "text"; text: string }> } | null> {
   switch (name) {
     case "destination_list": {
@@ -102,7 +115,29 @@ export async function dispatchRouterTool(
         config: parsed.config ?? {},
       };
       router.registry.add(dest);
-      return text({ added: dest.id, health: dest.health });
+
+      // §8.3: if this is an rclone destination, author its remote block in the
+      // EME-managed rclone.conf (never inline secrets — validateParams rejects).
+      let rcloneWrite: { ok: boolean; backup?: string | null; error?: string } | undefined;
+      if (dest.kind === "rclone" && deps.rcloneConfig && (dest.remote || dest.remotes?.length)) {
+        const members = dest.remotes?.length ? dest.remotes : dest.remote ? [dest.remote] : [];
+        const type = (dest.config as any)?.rcloneType ?? "local";
+        for (const m of members) {
+          const name = m.replace(/:$/, "");
+          const params = ((dest.config as any)?.rcloneParams ?? {}) as Record<string, string>;
+          const w = deps.rcloneConfig.writeRemote(name, type, params);
+          if (!w.ok) { rcloneWrite = w; break; }
+          rcloneWrite = w;
+        }
+      }
+
+      // §2: persist the destination list so it survives restart.
+      let persisted: { ok: boolean; path?: string; backup?: string | null; error?: string } | undefined;
+      if (deps.persist) {
+        persisted = deps.persist(router.registry.all());
+      }
+
+      return text({ added: dest.id, health: dest.health, rcloneWrite, persisted });
     }
     case "destination_test": {
       const { id } = DestinationTestSchema.parse(args);
@@ -111,8 +146,25 @@ export async function dispatchRouterTool(
     }
     case "destination_remove": {
       const { id } = DestinationRemoveSchema.parse(args);
+      const dest = router.registry.get(id);
+
+      // Deprecate (never delete) the rclone remote block if present.
+      let rcloneDeprecated: { ok: boolean; deprecated?: string } | undefined;
+      if (dest?.kind === "rclone" && deps.rcloneConfig) {
+        const members = dest.remotes?.length ? dest.remotes : dest.remote ? [dest.remote] : [];
+        for (const m of members) {
+          const r = deps.rcloneConfig.removeRemote(m.replace(/:$/, ""));
+          if (r.ok) rcloneDeprecated = r;
+        }
+      }
+
       const removed = router.registry.remove(id);
-      return text({ id, removed });
+
+      // Persist the post-removal destination list.
+      let persisted: { ok: boolean; path?: string; backup?: string | null; error?: string } | undefined;
+      if (deps.persist) persisted = deps.persist(router.registry.all());
+
+      return text({ id, removed, rcloneDeprecated, persisted });
     }
     case "route_dryrun": {
       const input = RouteDryrunSchema.parse(args ?? {});

@@ -1,7 +1,7 @@
 // Configuration exports
-import { loadConfig, createNyxConfig } from "./config-loader.js";
+import { loadConfig, createNyxConfig, saveConfig } from "./config-loader.js";
 import { defaultConfig } from "./index.js";
 import type { Config } from "./types.js";
 
-export { loadConfig, createNyxConfig, defaultConfig };
+export { loadConfig, saveConfig, createNyxConfig, defaultConfig };
 export type { Config };

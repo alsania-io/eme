@@ -126,6 +126,33 @@ export function validateConfig(config: Config): string[] {
   return warnings;
 }
 
+/**
+ * Reconcile a file's namespaced `storageRouter` block into the flat router
+ * fields. Applied PER FILE LOAD so config precedence is correct: a higher-
+ * precedence file's flat `destinations` must beat a lower-precedence file's
+ * `storageRouter` block (the earlier single-shot reconcile clobbered it).
+ * Returns a shallow copy with the namespaced block removed.
+ */
+function reconcileStorageRouter(fileConfig: any): Partial<Config> {
+  if (!fileConfig || typeof fileConfig !== "object") return fileConfig;
+  const out: any = { ...fileConfig };
+  const sr = out.storageRouter;
+  delete out.storageRouter;
+  if (sr && typeof sr === "object") {
+    // A namespaced block only fills fields the SAME file didn't already set flat.
+    if (out.destinations === undefined && Array.isArray(sr.destinations) && sr.destinations.length > 0) {
+      out.destinations = sr.destinations;
+    }
+    if (out.routing === undefined && Array.isArray(sr.rules) && sr.rules.length > 0) {
+      out.routing = sr.rules;
+    }
+    if (out.rcloneConfigPath === undefined && typeof sr.rcloneConfigPath === "string") {
+      out.rcloneConfigPath = sr.rcloneConfigPath;
+    }
+  }
+  return out;
+}
+
 export function loadConfig(configPath?: string): Config {
   // Priority: defaults < default file < explicit file < env vars
   // Env vars have HIGHEST priority (last spread wins)
@@ -140,34 +167,17 @@ export function loadConfig(configPath?: string): Config {
   const defaultConfigPath = candidatePaths.find((p) => fs.existsSync(p));
   if (defaultConfigPath) {
     const fileConfig = loadFromFile(defaultConfigPath);
-    config = { ...config, ...fileConfig };
+    config = { ...config, ...reconcileStorageRouter(fileConfig) };
   }
 
   // 2. Load from specified config file if provided (overrides default file)
   if (configPath && fs.existsSync(configPath)) {
     const fileConfig = loadFromFile(configPath);
-    config = { ...config, ...fileConfig };
+    config = { ...config, ...reconcileStorageRouter(fileConfig) };
   }
 
   // 3. Environment variables have HIGHEST priority
   config = { ...config, ...loadFromEnv() };
-
-  // 4. Storage Router (Phase 2b): reconcile the `storageRouter` config-file
-  //    block into the flat Config fields the router reads. ONE config system —
-  //    the block is just a namespaced spelling of destinations/routing/conf.
-  const rawAny = config as any;
-  if (rawAny.storageRouter && typeof rawAny.storageRouter === "object") {
-    const sr = rawAny.storageRouter;
-    if (Array.isArray(sr.destinations) && sr.destinations.length > 0) {
-      config.destinations = sr.destinations;
-    }
-    if (Array.isArray(sr.rules) && sr.rules.length > 0) {
-      config.routing = sr.rules;
-    }
-    if (typeof sr.rcloneConfigPath === "string") {
-      config.rcloneConfigPath = sr.rcloneConfigPath;
-    }
-  }
 
   // Validate and warn
   const warnings = validateConfig(config as Config);
@@ -439,4 +449,66 @@ export function createNyxConfig(config: Config): any {
       },
     },
   };
+}
+
+/**
+ * Persist a Config back to disk. Phase 2b addition: EME's config was read-only;
+ * `destination_add` now needs durable persistence (design §2). Rules honored:
+ * - Atomic: temp file + rename. Never a partial config.
+ * - Never delete: backs up the prior file to `<path>.bak-<ts>` first.
+ * - ONE config system: writes the same file loadConfig() prefers.
+ *
+ * The on-disk shape keeps the flat `destinations`/`routing`/`rcloneConfigPath`
+ * fields (loadConfig reconciles BOTH spellings), so no migration is required.
+ */
+export function saveConfig(config: Config, configPath?: string): { ok: boolean; path?: string; backup?: string | null; error?: string } {
+  try {
+    // Resolve target: explicit path > first existing candidate > project root.
+    // An explicit path wins outright (created if absent). Otherwise prefer an
+    // existing candidate, then fall back to the standard storage location.
+    let target: string;
+    if (configPath) {
+      target = configPath;
+    } else {
+      const candidates = [
+        path.join(process.cwd(), "eme-config.json"),
+        path.join(process.cwd(), "storage", "eme-config.json"),
+      ];
+      target = candidates.find((p) => fs.existsSync(p)) ?? path.join(process.cwd(), "storage", "eme-config.json");
+    }
+
+    const dir = path.dirname(target);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    // Backup before overwrite (never delete).
+    let backup: string | null = null;
+    if (fs.existsSync(target)) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      backup = `${target}.bak-${stamp}`;
+      fs.copyFileSync(target, backup);
+    }
+
+    // SECRET SAFETY (critical): never serialize env-resolved values back to
+    // disk. loadConfig() expands ${VAR} and merges env vars IN MEMORY; dumping
+    // the in-memory config would write resolved secrets in plaintext. Instead,
+    // start from the ON-DISK JSON (which keeps ${VAR} placeholders) and apply
+    // ONLY the router-managed patch keys on top. All other keys are untouched.
+    let onDisk: Record<string, any> = {};
+    if (fs.existsSync(target)) {
+      try { onDisk = JSON.parse(fs.readFileSync(target, "utf-8")); } catch { onDisk = {}; }
+    }
+    const PATCH_KEYS = ["destinations", "routing", "rcloneConfigPath"] as const;
+    const merged: Record<string, any> = { ...onDisk };
+    delete merged.storageRouter; // flat fields are authoritative on write
+    for (const k of PATCH_KEYS) {
+      if ((config as any)[k] !== undefined) merged[k] = (config as any)[k];
+    }
+
+    const tmp = path.join(dir, `.eme-config.tmp-${process.pid}-${Date.now()}`);
+    fs.writeFileSync(tmp, JSON.stringify(merged, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, target);
+    return { ok: true, path: target, backup };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? String(err) };
+  }
 }
