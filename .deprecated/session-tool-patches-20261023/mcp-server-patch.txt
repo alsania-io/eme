@@ -1,0 +1,71 @@
+// ===== ADD THESE IMPORTS AT THE TOP OF mcp-server.ts =====
+import { SessionToolHandlers } from "./session-tools.js";
+import {
+  SessionPushSchema,
+  SessionGetSchema,
+  SessionAckSchema,
+  SessionClearSchema,
+  SessionCheckpointSchema,
+  SessionRestoreSchema,
+  SessionListCheckpointsSchema,
+  SessionInfoSchema,
+} from "./session-tools.js";
+
+// ===== ADD TO EMEMCPServer CLASS PROPERTIES =====
+private sessionToolHandlers: SessionToolHandlers | null = null;
+
+// ===== ADD TO CONSTRUCTOR (after server creation) =====
+this.sessionToolHandlers = new SessionToolHandlers();
+
+// ===== ADD TO setupToolHandlers() - inside ListToolsRequestSchema tools array =====
+// Add after existing tools, before Local-RAG tools:
+
+{ name: "session_push", description: "Store an instruction or context for the current session", inputSchema: zodToJsonSchema(SessionPushSchema, schemaOptions) },
+{ name: "session_get", description: "Retrieve relevant context for the current turn (short-term + long-term)", inputSchema: zodToJsonSchema(SessionGetSchema, schemaOptions) },
+{ name: "session_ack", description: "Mark instructions as acknowledged (prevents re-injection)", inputSchema: zodToJsonSchema(SessionAckSchema, schemaOptions) },
+{ name: "session_clear", description: "Clear session cache (end of session)", inputSchema: zodToJsonSchema(SessionClearSchema, schemaOptions) },
+{ name: "session_checkpoint", description: "Save session state snapshot for recovery", inputSchema: zodToJsonSchema(SessionCheckpointSchema, schemaOptions) },
+{ name: "session_restore", description: "Restore session state from checkpoint", inputSchema: zodToJsonSchema(SessionRestoreSchema, schemaOptions) },
+{ name: "session_list_checkpoints", description: "List all checkpoints for a session", inputSchema: zodToJsonSchema(SessionListCheckpointsSchema, schemaOptions) },
+{ name: "session_info", description: "Get session statistics and status", inputSchema: zodToJsonSchema(SessionInfoSchema, schemaOptions) },
+
+// ===== ADD TO CallToolRequestSchema switch statement =====
+// Add after the existing cases, before default:
+
+case "session_push": {
+  const result = await this.sessionToolHandlers!.handlePush(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+case "session_get": {
+  const result = await this.sessionToolHandlers!.handleGet(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+case "session_ack": {
+  const result = await this.sessionToolHandlers!.handleAck(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+case "session_clear": {
+  const result = await this.sessionToolHandlers!.handleClear(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+case "session_checkpoint": {
+  const result = await this.sessionToolHandlers!.handleCheckpoint(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+case "session_restore": {
+  const result = await this.sessionToolHandlers!.handleRestore(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+case "session_list_checkpoints": {
+  const result = await this.sessionToolHandlers!.handleListCheckpoints(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+case "session_info": {
+  const result = await this.sessionToolHandlers!.handleInfo(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+
+// ===== ADD TO initialize() method (after memoryManager is created) =====
+if (this.sessionToolHandlers) {
+  this.sessionToolHandlers.setMemoryManager(this.memoryManager);
+}
